@@ -47,6 +47,42 @@ public final class SandboxTools {
 		return List.of(listFiles(), viewFile(), search(), editFile(), createFile(), runCommand(), diff());
 	}
 
+	/**
+	 * For writing tests before the implementation: read anything, but create and edit only files that
+	 * {@code isTest} accepts. No shell, so the restriction cannot be sidestepped.
+	 */
+	public List<AgentTool> testWriterTools(java.util.function.Predicate<String> isTest) {
+		return List.of(listFiles(), viewFile(), search(), onlyPaths(editFile(), isTest), onlyPaths(createFile(), isTest),
+				diff());
+	}
+
+	private static AgentTool onlyPaths(AgentTool tool, java.util.function.Predicate<String> allowed) {
+		return new AgentTool() {
+			@Override
+			public ToolSpec spec() {
+				return tool.spec();
+			}
+
+			@Override
+			public Mono<String> execute(UUID runId, ToolCall call) {
+				return Mono.defer(() -> {
+					String path = path(call.requiredString("path"));
+					if (!allowed.test(path)) {
+						throw new ToolException(path + " is not a test file; in this step you may only create or edit "
+								+ "tests (under test/ or tests/ directories, or named like FooTest.java, foo_test.go, "
+								+ "test_foo.py, foo.test.ts)");
+					}
+					return tool.execute(runId, call);
+				});
+			}
+
+			@Override
+			public boolean mutates() {
+				return true;
+			}
+		};
+	}
+
 	/** Look, don't touch: the reviewer and planner get these. */
 	public List<AgentTool> readOnlyTools() {
 		return List.of(listFiles(), viewFile(), search(), diff());

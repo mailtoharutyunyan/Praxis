@@ -8,6 +8,7 @@ import io.agenticsdlc.core.agent.tools.SandboxTools;
 import io.agenticsdlc.core.domain.RiskLevel;
 import io.agenticsdlc.core.domain.RunEventType;
 import io.agenticsdlc.core.domain.RunState;
+import io.agenticsdlc.core.domain.Usage;
 import io.agenticsdlc.core.engine.RunLimits;
 import io.agenticsdlc.core.engine.StageContext;
 import io.agenticsdlc.core.engine.StageHandler;
@@ -40,9 +41,20 @@ public final class AgentStages {
 	private final SandboxTools tools;
 	private final RunLimits runLimits;
 	private final AgentLoop.Limits loopLimits;
+	private final boolean testsFirst;
 
 	public AgentStages(AgentModels models, RunWorkspace workspace, SandboxTools tools, RunLimits runLimits,
 			AgentLoop.Limits loopLimits) {
+		this(models, workspace, tools, runLimits, loopLimits, false);
+	}
+
+	/**
+	 * @param testsFirst on a run's first implementation round, write failing tests for the change before
+	 *        implementing it (test files only, checked to fail on the unchanged code), then hold the coder to them
+	 */
+	public AgentStages(AgentModels models, RunWorkspace workspace, SandboxTools tools, RunLimits runLimits,
+			AgentLoop.Limits loopLimits, boolean testsFirst) {
+		this.testsFirst = testsFirst;
 		this.models = Objects.requireNonNull(models, "models");
 		this.workspace = Objects.requireNonNull(workspace, "workspace");
 		this.tools = Objects.requireNonNull(tools, "tools");
@@ -106,31 +118,135 @@ public final class AgentStages {
 		return Mono.zip(workspace.prepare(context), context.history().map(RunHistory::new)).flatMap(tuple -> {
 			RunWorkspace.Prepared prepared = tuple.getT1();
 			RunHistory history = tuple.getT2();
-			StringBuilder brief = new StringBuilder(Prompts.task(context.task()));
-			history.latestArtifact(RunHistory.SPEC).ifPresent(spec -> brief.append(
-					"\n\nApproved specification:\n").append(Prompts.block("spec", spec)));
-			appendRepository(brief, prepared);
-			history.latestRework().ifPresent(rework -> brief.append("\n\nThis is a follow-up attempt. ")
-					.append(rework).append("\nFix these problems; your earlier changes are still in the workspace."));
-			history.latestChangeRequest().ifPresent(feedback -> brief.append("\n\n").append(feedback));
-			history.currentRevision().ifPresent(revision -> brief.append(Prompts.revision(revision)));
-			return loop(AgentRole.CODER, tools.coderTools(), loopLimits)
-					.run(context, "agent:coder", Prompts.CODER, brief.toString(), remainingTokens(context))
-					.flatMap(outcome -> {
-						if (!outcome.completed()) {
-							return Mono.just(escalate("coder", outcome));
-						}
-						return workspace.diff(context).map(diff -> diff.isBlank()
-								? (StageOutcome) new StageOutcome.Escalate("the coder finished without changing any "
-										+ "file: " + abbreviate(outcome.finalText()), outcome.usage())
-								: completed(outcome, Map.of("diffChars", diff.length())));
-					});
+			boolean firstRound = history.latestArtifactEvent(RunHistory.TESTS).isEmpty()
+					&& history.currentRevision().isEmpty() && history.latestRework().isEmpty();
+			Mono<TestsFirst> tests = testsFirst && firstRound ? writeTests(context, prepared, history)
+					: Mono.just(TestsFirst.NONE);
+			return tests.flatMap(written -> code(context, prepared, history, written));
 		});
+	}
+
+	private Mono<StageOutcome> code(StageContext context, RunWorkspace.Prepared prepared, RunHistory history,
+			TestsFirst written) {
+		StringBuilder brief = new StringBuilder(Prompts.task(context.task()));
+		history.latestArtifact(RunHistory.SPEC).ifPresent(spec -> brief.append(
+				"\n\nApproved specification:\n").append(Prompts.block("spec", spec)));
+		appendRepository(brief, prepared);
+		history.latestRework().ifPresent(rework -> brief.append("\n\nThis is a follow-up attempt. ")
+				.append(rework).append("\nFix these problems; your earlier changes are still in the workspace."));
+		history.latestChangeRequest().ifPresent(feedback -> brief.append("\n\n").append(feedback));
+		history.currentRevision().ifPresent(revision -> brief.append(Prompts.revision(revision)));
+		brief.append(written.briefForCoder());
+		return loop(AgentRole.CODER, tools.coderTools(), loopLimits)
+				.run(context, "agent:coder", Prompts.CODER, brief.toString(), remainingTokens(context))
+				.map(outcome -> new AgentLoop.Outcome(outcome.stop(), outcome.finalText(),
+						outcome.usage().plus(written.usage()), outcome.turns()))
+				.flatMap(outcome -> {
+					if (!outcome.completed()) {
+						return Mono.just(escalate("coder", outcome));
+					}
+					return workspace.diff(context).map(diff -> diff.isBlank()
+							? (StageOutcome) new StageOutcome.Escalate("the coder finished without changing any "
+									+ "file: " + abbreviate(outcome.finalText()), outcome.usage())
+							: completed(outcome, Map.of("diffChars", diff.length())));
+				});
+	}
+
+	/** Tests written before the implementation, as the coder needs to know them. */
+	record TestsFirst(Usage usage, List<String> files, boolean failedFirst) {
+		static final TestsFirst NONE = new TestsFirst(Usage.ZERO, List.of(), false);
+
+		String briefForCoder() {
+			if (files.isEmpty()) {
+				return "";
+			}
+			return "\n\nTests for this change were written first" + (failedFirst ? " and fail on the current code" : "")
+					+ ": " + String.join(", ", files) + ". Make them pass. Do not weaken or delete them; if one is "
+					+ "genuinely wrong, fix it and say why in your final reply.";
+		}
+	}
+
+	/** Write tests that fail now and pass once the change is made; one retry if they already pass. */
+	private Mono<TestsFirst> writeTests(StageContext context, RunWorkspace.Prepared prepared, RunHistory history) {
+		StringBuilder brief = new StringBuilder(Prompts.task(context.task()));
+		history.latestArtifact(RunHistory.SPEC).ifPresent(spec -> brief.append(
+				"\n\nApproved specification:\n").append(Prompts.block("spec", spec)));
+		appendRepository(brief, prepared);
+		return writeTests(context, prepared, brief.toString(), Usage.ZERO, 1);
+	}
+
+	private Mono<TestsFirst> writeTests(StageContext context, RunWorkspace.Prepared prepared, String brief, Usage spent,
+			int attempt) {
+		return loop(AgentRole.CODER, tools.testWriterTools(TestPaths::isTest), loopLimits)
+				.run(context, "agent:test-writer", Prompts.TEST_WRITER, brief, remainingTokens(context))
+				.flatMap(outcome -> {
+					Usage usage = spent.plus(outcome.usage());
+					if (!outcome.completed() || outcome.finalText().strip().startsWith("NO_TESTS")) {
+						String reason = outcome.completed() ? outcome.finalText().strip()
+								: "the test writer stopped: " + abbreviate(outcome.finalText());
+						return testsArtifact(context, Map.of(), false, reason).thenReturn(new TestsFirst(usage, List.of(),
+								false));
+					}
+					return workspace.diff(context).flatMap(diff -> {
+						List<String> files = TestPaths.changedFiles(diff);
+						if (files.isEmpty()) {
+							return testsArtifact(context, Map.of(), false, "no tests were written")
+									.thenReturn(new TestsFirst(usage, List.of(), false));
+						}
+						return workspace.runAll(context, prepared.profile().verifyCommands()).flatMap(results -> {
+							var last = results.getLast();
+							if (last.succeeded() && attempt == 1) {
+								return writeTests(context, prepared, brief + "\n\nYour tests already pass on the "
+										+ "current code, so they do not capture the change. Make them check the new "
+										+ "behaviour. The test run said:\n" + Prompts.block("test_output", last.tail(4_000)),
+										usage, 2);
+							}
+							return fingerprints(context, files).flatMap(prints -> testsArtifact(context, prints,
+									!last.succeeded(), diff).thenReturn(new TestsFirst(usage, files, !last.succeeded())));
+						});
+					});
+				});
+	}
+
+	private Mono<Map<String, Object>> fingerprints(StageContext context, List<String> files) {
+		return reactor.core.publisher.Flux.fromIterable(files)
+				.concatMap(file -> workspace.read(context, file)
+						.map(content -> Map.entry(file, RunHistory.fingerprint(content)))
+						.onErrorResume(e -> Mono.empty()))
+				.collectMap(Map.Entry::getKey, entry -> (Object) entry.getValue(), LinkedHashMap::new);
+	}
+
+	private static Mono<Void> testsArtifact(StageContext context, Map<String, Object> files, boolean failedFirst,
+			String content) {
+		return artifact(context, RunHistory.TESTS, content, Map.of("files", files, "failedFirst", failedFirst));
+	}
+
+	/** For the reviewer: whether the tests written first were changed while implementing. */
+	private Mono<String> testsNote(StageContext context, RunHistory history) {
+		return history.latestArtifactEvent(RunHistory.TESTS)
+				.filter(event -> event.payload().get("files") instanceof Map<?, ?> files && !files.isEmpty())
+				.map(event -> {
+					Map<?, ?> locked = (Map<?, ?>) event.payload().get("files");
+					List<String> files = locked.keySet().stream().map(String::valueOf).toList();
+					return fingerprints(context, files).map(current -> {
+						List<String> changed = files.stream()
+								.filter(file -> !String.valueOf(locked.get(file)).equals(current.get(file))).toList();
+						if (changed.isEmpty()) {
+							return "\n\nThese tests were written before the implementation and are unchanged: "
+									+ String.join(", ", files) + ".";
+						}
+						return "\n\nThese tests were written before the implementation and were changed afterwards: "
+								+ String.join(", ", changed) + ". Check in the diff that they were not weakened to make "
+								+ "the implementation pass. As first written:\n"
+								+ Prompts.block("tests_as_written", String.valueOf(event.payload().get("content")));
+					});
+				})
+				.orElse(Mono.just(""));
 	}
 
 	Mono<StageOutcome> review(StageContext context) {
 		return Mono.zip(workspace.prepare(context), context.history().map(RunHistory::new), workspace.diff(context))
-				.flatMap(tuple -> {
+				.flatMap(tuple -> testsNote(context, tuple.getT2()).flatMap(testsNote -> {
 					RunHistory history = tuple.getT2();
 					String diff = tuple.getT3();
 					StringBuilder brief = new StringBuilder(Prompts.task(context.task()));
@@ -139,6 +255,7 @@ public final class AgentStages {
 					appendRepository(brief, tuple.getT1());
 					history.currentRevision().ifPresent(revision -> brief.append(Prompts.revision(revision))
 							.append("\nCheck that the changes address this request."));
+					brief.append(testsNote);
 					brief.append("\n\nReview the current changes (show_diff).");
 					return artifact(context, RunHistory.DIFF, diff, Map.of(RunHistory.FINGERPRINT, RunHistory.fingerprint(diff)))
 							.then(loop(AgentRole.REVIEWER, tools.readOnlyTools(), loopLimits)
@@ -154,7 +271,7 @@ public final class AgentStages {
 										.thenReturn(approved ? completed(outcome, Map.of("verdict", label))
 												: new StageOutcome.NeedsRework(outcome.finalText(), outcome.usage()));
 							});
-				});
+				}));
 	}
 
 	/** The reviewer approves only with {@code VERDICT: APPROVE} as the last non-blank line of its reply. */

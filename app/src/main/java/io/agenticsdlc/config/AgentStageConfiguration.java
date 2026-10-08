@@ -29,7 +29,7 @@ class AgentStageConfiguration {
 		return new AgentStages(models, workspace,
 				new SandboxTools(sandbox, checkout, properties.sandbox().commandTimeout()), limits,
 				new AgentLoop.Limits(agent.maxTurns(), agent.maxOutputTokens(), agent.maxToolResultChars(),
-						agent.maxRepeats()));
+						agent.maxRepeats()), agent.testsFirst());
 	}
 
 	@Bean

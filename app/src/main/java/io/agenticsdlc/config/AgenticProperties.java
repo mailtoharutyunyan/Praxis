@@ -177,11 +177,12 @@ public record AgenticProperties(@Valid @NotNull Worker worker, @Valid @NotNull L
 	 * @param maxRepeats identical consecutive tool calls before the loop counts as stuck
 	 * @param modelTimeout one model call, including the provider SDK's own retries
 	 * @param modelRetries further attempts after a transient failure (rate limit, overload, 5xx, timeout)
+	 * @param testsFirst write failing tests for the change before implementing it (first round of a run)
 	 */
 	public record Agent(@DefaultValue("true") boolean enabled, @DefaultValue("60") @Min(1) int maxTurns,
 			@DefaultValue("12000") @Min(500) int maxToolResultChars, @DefaultValue("3") @Min(2) int maxRepeats,
 			@DefaultValue("16000") @Min(256) int maxOutputTokens, @DefaultValue("10m") @NotNull Duration modelTimeout,
-			@DefaultValue("4") @Min(0) @Max(10) int modelRetries) {
+			@DefaultValue("4") @Min(0) @Max(10) int modelRetries, @DefaultValue("true") boolean testsFirst) {
 	}
 
 	/**

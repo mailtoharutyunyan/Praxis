@@ -4,7 +4,7 @@ import type { GateDecision, Run, RunEvent } from "../lib/types";
 import { DiffView } from "./DiffView";
 import { Markdown } from "./Markdown";
 
-type Tab = "spec" | "diff" | "review";
+type Tab = "spec" | "tests" | "diff" | "review";
 
 function latest(events: RunEvent[], kind: string): RunEvent | undefined {
   return [...events].reverse().find((e) => e.type === "ARTIFACT_PRODUCED" && e.payload.kind === kind);
@@ -27,14 +27,16 @@ export function ApprovalPanel(props: {
   const spec = latest(events, "spec");
   const diff = latest(events, "diff");
   const review = latest(events, "review");
+  const tests = latest(events, "tests");
   const initial: Tab = run.pendingGate === "SPEC" ? "spec" : "diff";
   const [tab, setTab] = useState<Tab>(initial);
   const [comment, setComment] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const tabs = useMemo(() => ([
-    ["spec", "Specification", spec], ["diff", "Changes", diff], ["review", "Review", review],
-  ] as const).filter(([, , artifact]) => artifact !== undefined), [spec, diff, review]);
+    ["spec", "Specification", spec], ["tests", "Tests first", tests], ["diff", "Changes", diff],
+    ["review", "Review", review],
+  ] as const).filter(([, , artifact]) => artifact !== undefined), [spec, tests, diff, review]);
 
   const decide = async (decision: GateDecision) => {
     setBusy(true);
@@ -65,6 +67,18 @@ export function ApprovalPanel(props: {
             ))}
           </div>
           {tab === "spec" && spec && <Markdown source={String(spec.payload.content ?? "")} />}
+          {tab === "tests" && tests && (
+            <>
+              <p className="muted small">
+                {tests.payload.failedFirst
+                  ? "Written before the implementation; they failed on the unchanged code."
+                  : "Written before the implementation; they did not fail first, so they may not capture the change."}
+              </p>
+              {String(tests.payload.content ?? "").startsWith("diff")
+                ? <DiffView diff={String(tests.payload.content)} />
+                : <p>{String(tests.payload.content ?? "")}</p>}
+            </>
+          )}
           {tab === "diff" && diff && <DiffView diff={String(diff.payload.content ?? "")} />}
           {tab === "review" && review && (
             <>

@@ -190,6 +190,25 @@ class AgentStagesTest {
 	}
 
 	@Test
+	void theReviewerIsToldWhenTestsWrittenFirstWereChangedLater() {
+		store.append(context.run().id(), "w", List.of(RunEvent.of(context.run().id(), RunEventType.ARTIFACT_PRODUCED,
+				"system", Map.of("kind", "tests", "failedFirst", true, "content", "+assert total == 3",
+						"files", Map.of("tests/total_test.go", RunHistory.fingerprint("assert total == 3\n"))),
+				Instant.now()))).block();
+		diff = "+++ b/total.go";
+		sandbox.files.put("tests/total_test.go", "assert total >= 0\n");
+		models.get(AgentRole.REVIEWER).thenAnswer("weakened\nVERDICT: CHANGES_REQUESTED");
+		stages.review(context).block();
+		assertThat(firstPrompt(AgentRole.REVIEWER)).contains("changed afterwards: tests/total_test.go",
+				"<tests_as_written>", "+assert total == 3");
+
+		sandbox.files.put("tests/total_test.go", "assert total == 3\n");
+		models.put(AgentRole.REVIEWER, new ScriptedModel().thenAnswer("ok\nVERDICT: APPROVE"));
+		stages.review(context).block();
+		assertThat(firstPrompt(AgentRole.REVIEWER)).contains("are unchanged: tests/total_test.go");
+	}
+
+	@Test
 	void reviewVerdictDecidesAndArtifactsAreRecorded() {
 		diff = "+++ b/App.java\n+x";
 		models.get(AgentRole.REVIEWER).thenAnswer("- App.java:3 off by one\nVERDICT: CHANGES_REQUESTED");

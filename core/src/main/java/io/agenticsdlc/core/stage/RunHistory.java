@@ -17,6 +17,8 @@ public record RunHistory(List<RunEvent> events) {
 	public static final String SPEC = "spec";
 	public static final String DIFF = "diff";
 	public static final String REVIEW = "review";
+	/** Tests written before the implementation: payload {@code files} (path to SHA-256), {@code failedFirst}. */
+	public static final String TESTS = "tests";
 	/** Payload key of a diff artifact's SHA-256, so publishing can prove it pushes exactly the approved diff. */
 	public static final String FINGERPRINT = "sha256";
 
@@ -29,6 +31,13 @@ public record RunHistory(List<RunEvent> events) {
 		return events.reversed().stream()
 				.filter(e -> e.type() == RunEventType.ARTIFACT_PRODUCED && kind.equals(e.payload().get("kind")))
 				.map(e -> Objects.toString(e.payload().get("content"), ""))
+				.findFirst();
+	}
+
+	/** The most recent artifact event of a kind, with its whole payload. */
+	public Optional<RunEvent> latestArtifactEvent(String kind) {
+		return events.reversed().stream()
+				.filter(e -> e.type() == RunEventType.ARTIFACT_PRODUCED && kind.equals(e.payload().get("kind")))
 				.findFirst();
 	}
 

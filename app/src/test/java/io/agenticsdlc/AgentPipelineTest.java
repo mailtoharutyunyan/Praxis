@@ -63,7 +63,12 @@ class AgentPipelineTest {
 	static {
 		try {
 			ROOT = Files.createTempDirectory("agentic-agent-pipeline");
-			TestRepos.demoRepo(ROOT.resolve("repo"));
+			// Like the demo repository, but its test command also runs the shell tests under tests/.
+			TestRepos.createRepo(ROOT.resolve("repo"), Map.of(
+					".agentic-sdlc.yml", "image: " + TestRepos.ALPINE + "\nbuild: test -f hello.txt\n"
+							+ "test: grep -q hello hello.txt && for t in tests/*.sh; do [ -e \"$t\" ] || continue; sh \"$t\" || exit 1; done\n",
+					"hello.txt", "hello world\n",
+					"AGENTS.md", "# Agent notes\nKeep it simple.\n"));
 		}
 		catch (Exception e) {
 			throw new ExceptionInInitializerError(e);
@@ -88,6 +93,11 @@ class AgentPipelineTest {
 					call("view_file", Map.of("path", "hello.txt")),
 					answer("## Requirements\n1. WHEN the file is read THE SYSTEM SHALL greet the agent."))));
 			scripts.put(AgentRole.CODER, new ArrayDeque<>(List.of(
+					// test writer: may not touch code, writes a test that fails until the greeting changes
+					call("edit_file", Map.of("path", "hello.txt", "old_string", "hello world", "new_string", "hello agent")),
+					call("create_file", Map.of("path", "tests/greeting.sh", "content", "grep -q 'hello agent' hello.txt\n")),
+					answer("tests/greeting.sh: the greeting names the agent."),
+					// coder
 					call("edit_file", Map.of("path", "hello.txt", "old_string", "hello world", "new_string", "hello agent")),
 					call("run_command", Map.of("command", "grep -q hello hello.txt")),
 					answer("Changed the greeting."))));
@@ -165,6 +175,14 @@ class AgentPipelineTest {
 		assertThat(atPublish.pendingGate()).as("state %s", atPublish.state()).isEqualTo(Gate.PUBLISH);
 		assertThat(Files.readString(paths.repo(id).resolve("hello.txt"))).isEqualTo("hello agent\n");
 		assertThat(atPublish.usage().totalTokens()).isPositive();
+		List<RunEvent> events = queries.events(id, 0, 1000).collectList().block();
+		assertThat(events).filteredOn(e -> e.type() == RunEventType.TOOL_RESULT && Boolean.TRUE.equals(e.payload().get("error")))
+				.anySatisfy(e -> assertThat(String.valueOf(e.payload().get("output"))).contains("hello.txt is not a test file"));
+		assertThat(events).filteredOn(e -> e.type() == RunEventType.ARTIFACT_PRODUCED && "tests".equals(e.payload().get("kind")))
+				.singleElement().satisfies(e -> {
+					assertThat(e.payload()).containsEntry("failedFirst", true);
+					assertThat(((Map<?, ?>) e.payload().get("files")).keySet()).map(String::valueOf).contains("tests/greeting.sh");
+				});
 		assertThat(atPublish.usage().costMicroUsd()).isPositive();
 
 		List<RunEvent> log = queries.events(id, 0, 500).collectList().block();

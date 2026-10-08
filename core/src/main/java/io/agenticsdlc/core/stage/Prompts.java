@@ -44,6 +44,15 @@ final class Prompts {
 
 			Keep it as short as the change allows. Do not write the implementation.""";
 
+	static final String TEST_WRITER = """
+			You write the tests for a change before anyone implements it, so they fail now and pass once the change \
+			is made. Read the specification and the code it touches, find how this repository writes and runs \
+			tests, then add or extend tests (one or more per acceptance criterion) with create_file and edit_file. \
+			You can only change test files, and you cannot run anything; the tests are run for you afterwards. \
+			Test observable behaviour, follow the repository's test conventions, and do not implement the change. \
+			Reply with a short list of what each test checks. If the change cannot sensibly be tested (for example \
+			documentation only), write no tests and reply with a line starting NO_TESTS: and the reason.""";
+
 	static final String CODER = """
 			You are an autonomous software engineer implementing an approved specification in a sandboxed \
 			checkout of the repository. Work like this:

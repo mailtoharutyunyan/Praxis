@@ -168,9 +168,10 @@ The reviewer's verdict is read only from the last line of its reply, and if tria
 | Triage | Triage model, request text only. Fails safe to HIGH when unsure. | Risk level and rationale. Untrusted sources always add SPEC. |
 | Context | Host plus sandbox: clone, detect toolchain, set up, baseline build | Toolchain, base commit, baseline result |
 | Spec | Planner with read-only tools | `spec` artifact: EARS requirements, design, tasks, test plan |
-| Implement | Coder with sandbox tools | Changes in the working copy. Any approver feedback, failed checks or review findings are fed back in. |
+| Implement: tests first | Test writer (coder model). It can create and edit only test files and has no shell. | Runs on a run's first round (`agentic.agent.tests-first`, on by default). Tests for the acceptance criteria are written, and the app runs them to confirm they fail on the unchanged code, with one retry if they pass. The `tests` artifact records the files and their fingerprints. |
+| Implement | Coder with sandbox tools | Changes in the working copy that make the first-written tests pass. Approver feedback, failed checks, review findings and revision requests are fed back in. |
 | Verify | Deterministic build and test in the sandbox | Passes on to review (`diff` artifact), or sends the run back to implement |
-| Review | Fresh-context reviewer with read-only tools | `review` artifact. `VERDICT: APPROVE` moves on to the PUBLISH gate; otherwise back to implement. |
+| Review | Fresh-context reviewer with read-only tools | `review` artifact. `VERDICT: APPROVE` moves on to the PUBLISH gate; otherwise back to implement. The reviewer is told if any first-written test changed afterwards, and is shown the original version to check that it wasn't weakened. |
 
 Gates show the latest artifacts (`GET /api/v1/runs/{id}/events`, `ARTIFACT_PRODUCED`). Text from tickets and issues is passed to models as data, wrapped in an escaped `<task>` block, with an explicit instruction to ignore embedded commands. Status comments on tickets never quote failure reasons, which can contain model output; they link to the run instead. A janitor removes the sandboxes and working copies of finished runs.
 

@@ -60,6 +60,11 @@ public final class RunWorkspace {
 						.thenReturn(result));
 	}
 
+	/** A file of the working copy, read inside the sandbox. */
+	public Mono<String> read(StageContext context, String path) {
+		return sandbox.readFile(context.run().id(), path, 512 * 1024);
+	}
+
 	public Mono<String> diff(StageContext context) {
 		return checkout.diff(context.run().id());
 	}
