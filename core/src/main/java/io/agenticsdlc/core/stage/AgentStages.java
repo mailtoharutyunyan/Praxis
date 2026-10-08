@@ -31,8 +31,9 @@ public final class AgentStages {
 
 	private static final Pattern RISK = Pattern.compile("RISK:\\s*(LOW|MEDIUM|HIGH)", Pattern.CASE_INSENSITIVE);
 	private static final Pattern RATIONALE = Pattern.compile("RATIONALE:\\s*(.+)", Pattern.CASE_INSENSITIVE);
-	private static final Pattern VERDICT = Pattern.compile("VERDICT:\\s*(APPROVE|CHANGES_REQUESTED)\\s*$",
-			Pattern.CASE_INSENSITIVE | Pattern.MULTILINE);
+	/** Only the reply's last line counts, so a verdict quoted earlier (or planted in the diff) is ignored. */
+	private static final Pattern VERDICT = Pattern.compile("^[*_`\\s]*VERDICT:\\s*(APPROVE|CHANGES_REQUESTED)[*_`\\s]*$",
+			Pattern.CASE_INSENSITIVE);
 
 	private final AgentModels models;
 	private final RunWorkspace workspace;
@@ -66,16 +67,19 @@ public final class AgentStages {
 		return loop(AgentRole.TRIAGE, List.of(), oneTurn)
 				.run(context, "agent:triage", Prompts.TRIAGE, Prompts.task(context.task()), remainingTokens(context))
 				.map(outcome -> {
-					Matcher risk = RISK.matcher(outcome.finalText());
 					Matcher rationale = RATIONALE.matcher(outcome.finalText());
-					if (!risk.find()) {
-						// Fail safe: an unreadable assessment gets every gate.
+					// Fail safe: an unreadable assessment gets every gate, and if several levels appear the highest wins.
+					RiskLevel level = RISK.matcher(outcome.finalText()).results()
+							.map(m -> RiskLevel.valueOf(m.group(1).toUpperCase(Locale.ROOT)))
+							.max(java.util.Comparator.naturalOrder())
+							.orElse(null);
+					if (level == null) {
 						return new StageOutcome.Triaged(RiskLevel.HIGH,
 								"triage reply was not understood, defaulting to HIGH: " + abbreviate(outcome.finalText()),
 								outcome.usage());
 					}
-					return new StageOutcome.Triaged(RiskLevel.valueOf(risk.group(1).toUpperCase(Locale.ROOT)),
-							rationale.find() ? rationale.group(1).strip() : "", outcome.usage());
+					return new StageOutcome.Triaged(level, rationale.find() ? rationale.group(1).strip() : "",
+							outcome.usage());
 				});
 	}
 
@@ -88,7 +92,7 @@ public final class AgentStages {
 			history.latestChangeRequest().ifPresent(feedback -> {
 				brief.append("\n\nA reviewer rejected the previous specification. Revise it.\n").append(feedback);
 				history.latestArtifact(RunHistory.SPEC).ifPresent(previous -> brief.append(
-						"\n\nPrevious specification:\n<previous_spec>\n").append(previous).append("\n</previous_spec>"));
+						"\n\nPrevious specification:\n").append(Prompts.block("previous_spec", previous)));
 			});
 			return loop(AgentRole.PLANNER, tools.readOnlyTools(), loopLimits)
 					.run(context, "agent:planner", Prompts.PLANNER, brief.toString(), remainingTokens(context))
@@ -104,7 +108,7 @@ public final class AgentStages {
 			RunHistory history = tuple.getT2();
 			StringBuilder brief = new StringBuilder(Prompts.task(context.task()));
 			history.latestArtifact(RunHistory.SPEC).ifPresent(spec -> brief.append(
-					"\n\nApproved specification:\n<spec>\n").append(spec).append("\n</spec>"));
+					"\n\nApproved specification:\n").append(Prompts.block("spec", spec)));
 			appendRepository(brief, prepared);
 			history.latestRework().ifPresent(rework -> brief.append("\n\nThis is a follow-up attempt. ")
 					.append(rework).append("\nFix these problems; your earlier changes are still in the workspace."));
@@ -130,7 +134,7 @@ public final class AgentStages {
 					String diff = tuple.getT3();
 					StringBuilder brief = new StringBuilder(Prompts.task(context.task()));
 					history.latestArtifact(RunHistory.SPEC).ifPresent(spec -> brief.append(
-							"\n\nSpecification:\n<spec>\n").append(spec).append("\n</spec>"));
+							"\n\nSpecification:\n").append(Prompts.block("spec", spec)));
 					appendRepository(brief, tuple.getT1());
 					brief.append("\n\nReview the current changes (show_diff).");
 					return artifact(context, RunHistory.DIFF, diff, Map.of(RunHistory.FINGERPRINT, RunHistory.fingerprint(diff)))
@@ -141,15 +145,20 @@ public final class AgentStages {
 								if (!outcome.completed()) {
 									return Mono.just(escalate("reviewer", outcome));
 								}
-								Matcher verdict = VERDICT.matcher(outcome.finalText());
-								boolean approved = verdict.find()
-										&& verdict.group(1).equalsIgnoreCase("APPROVE");
+								boolean approved = approved(outcome.finalText());
 								String label = approved ? "APPROVE" : "CHANGES_REQUESTED";
 								return artifact(context, RunHistory.REVIEW, outcome.finalText(), Map.of("verdict", label))
 										.thenReturn(approved ? completed(outcome, Map.of("verdict", label))
 												: new StageOutcome.NeedsRework(outcome.finalText(), outcome.usage()));
 							});
 				});
+	}
+
+	/** The reviewer approves only with {@code VERDICT: APPROVE} as the last non-blank line of its reply. */
+	static boolean approved(String reply) {
+		String[] lines = reply.strip().split("\\R");
+		Matcher verdict = VERDICT.matcher(lines[lines.length - 1]);
+		return verdict.matches() && verdict.group(1).equalsIgnoreCase("APPROVE");
 	}
 
 	private AgentLoop loop(AgentRole role, List<AgentTool> roleTools, AgentLoop.Limits limits) {
@@ -166,8 +175,8 @@ public final class AgentStages {
 				.append(". Build: `").append(prepared.profile().build())
 				.append("`. Tests: `").append(prepared.profile().test()).append("`.");
 		if (prepared.checkout().agentInstructions() != null) {
-			brief.append("\n\nRepository guidance (AGENTS.md / CLAUDE.md):\n<guidance>\n")
-					.append(prepared.checkout().agentInstructions()).append("\n</guidance>");
+			brief.append("\n\nRepository guidance (AGENTS.md / CLAUDE.md):\n")
+					.append(Prompts.block("guidance", prepared.checkout().agentInstructions()));
 		}
 	}
 

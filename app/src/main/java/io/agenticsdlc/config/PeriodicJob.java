@@ -32,10 +32,17 @@ final class PeriodicJob implements SmartLifecycle {
 	private final Duration timeout;
 	private final Supplier<? extends Publisher<?>> sweep;
 	private final Lease lease;
+	private final Duration initialDelay;
 	private volatile Disposable schedule;
 
 	/** @param lease null to sweep on every instance (per-node work, such as cleaning local workspaces) */
 	PeriodicJob(String name, Duration interval, Duration timeout, Supplier<? extends Publisher<?>> sweep, Lease lease) {
+		this(name, interval, interval, timeout, sweep, lease);
+	}
+
+	PeriodicJob(String name, Duration initialDelay, Duration interval, Duration timeout,
+			Supplier<? extends Publisher<?>> sweep, Lease lease) {
+		this.initialDelay = Objects.requireNonNull(initialDelay, "initialDelay");
 		this.name = Objects.requireNonNull(name, "name");
 		this.interval = Objects.requireNonNull(interval, "interval");
 		this.timeout = Objects.requireNonNull(timeout, "timeout");
@@ -63,7 +70,7 @@ final class PeriodicJob implements SmartLifecycle {
 
 	@Override
 	public void start() {
-		schedule = Flux.interval(interval, interval)
+		schedule = Flux.interval(initialDelay, interval)
 				.onBackpressureDrop()
 				.concatMap(tick -> runOnce(), 1)
 				.subscribe();

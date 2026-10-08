@@ -50,6 +50,9 @@ class R2dbcRunStoreTest {
 	@Autowired
 	PostgresRunChangeSignals signals;
 
+	@Autowired
+	org.springframework.r2dbc.core.DatabaseClient db;
+
 	private final Instant now = Instant.now().truncatedTo(ChronoUnit.MICROS);
 
 	private Task task(String key) {
@@ -167,6 +170,59 @@ class R2dbcRunStoreTest {
 	}
 
 	@Test
+	void cancelledRunsCanNoLongerBeRenewedOrAppendedTo() {
+		Run run = submit(task(null)).view().run();
+		String owner = "cancel-test-" + UUID.randomUUID();
+		claimSpecific(run.id(), owner);
+		Run current = store.find(run.id()).block().run();
+		store.update(current, current.transitionTo(RunState.CANCELLED, now), List.of()).block();
+
+		assertThat(store.renewLease(run.id(), owner, Duration.ofSeconds(30)).block()).isFalse();
+		StepVerifier.create(store.append(run.id(), owner, List.of(event(run, RunEventType.AGENT_MESSAGE, Map.of()))))
+				.expectError(LeaseLostException.class).verify();
+	}
+
+	@Test
+	void runsStayWithTheNodeHoldingTheirWorkspaceUntilItStopsBeatingHearts() {
+		Run run = submit(task(null)).view().run();
+		String other = "node-" + UUID.randomUUID().toString().substring(0, 8);
+		db.sql("insert into worker_nodes (node, heartbeat_at) values (:node, now())").bind("node", other).then().block();
+		db.sql("update runs set workspace_node = :node where id = :id").bind("node", other).bind("id", run.id()).then()
+				.block();
+
+		assertThat(claimAll("affinity-" + UUID.randomUUID())).doesNotContain(run.id());
+
+		db.sql("update worker_nodes set heartbeat_at = now() - interval '1 hour' where node = :node").bind("node", other)
+				.then().block();
+		claimSpecific(run.id(), "affinity-" + UUID.randomUUID());
+		assertThat(db.sql("select workspace_node from runs where id = :id").bind("id", run.id())
+				.map(row -> row.get("workspace_node", String.class)).one().block()).isNotEqualTo(other);
+	}
+
+	@Test
+	void latestEventsReturnsTheNewestOfTheGivenTypesOldestFirst() {
+		Run run = submit(task(null)).view().run();
+		List<RunEvent> events = new ArrayList<>();
+		for (int i = 0; i < 5; i++) {
+			events.add(event(run, RunEventType.ARTIFACT_PRODUCED, Map.of("n", i)));
+			events.add(event(run, RunEventType.TOOL_CALLED, Map.of("n", i)));
+		}
+		store.update(run, run, events).block();
+
+		assertThat(store.latestEvents(run.id(), Set.of(RunEventType.ARTIFACT_PRODUCED, RunEventType.RUN_CREATED), 3)
+				.map(e -> e.payload().get("n")).collectList().block()).containsExactly(2, 3, 4);
+	}
+
+	private List<UUID> claimAll(String owner) {
+		List<UUID> claimed = new ArrayList<>();
+		for (Run next = store.claim(owner, Duration.ofSeconds(30)).block(); next != null;
+				next = store.claim(owner, Duration.ofSeconds(30)).block()) {
+			claimed.add(next.id());
+		}
+		return claimed;
+	}
+
+	@Test
 	void listFiltersByStateNewestFirstWithCursor() {
 		List<UUID> ids = new ArrayList<>();
 		for (int i = 0; i < 3; i++) {
@@ -176,7 +232,8 @@ class R2dbcRunStoreTest {
 			store.submit(task, run, List.of()).block();
 			ids.add(run.id());
 		}
-		List<RunView> page = store.list(Set.of(RunState.RECEIVED), now.plusSeconds(1002), 2).collectList().block();
+		List<RunView> page = store.list(Set.of(RunState.RECEIVED), RunStore.Cursor.at(now.plusSeconds(1002)), 2)
+				.collectList().block();
 		assertThat(page).extracting(v -> v.run().id()).containsExactly(ids.get(1), ids.get(0));
 		assertThat(store.list(Set.of(RunState.DONE), null, 10).collectList().block())
 				.noneMatch(v -> ids.contains(v.run().id()));

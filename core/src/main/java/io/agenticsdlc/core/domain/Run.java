@@ -108,12 +108,17 @@ public record Run(
 		return with(RunState.NEEDS_HUMAN, null, state, now);
 	}
 
-	/** Continue exactly where the run was escalated; never somewhere else, so no gate can be skipped. */
+	/**
+	 * Continue exactly where the run was escalated; never somewhere else, so no gate can be skipped. The fix and review
+	 * loop counters start over: a human looked at the run and asked for another round, which a run escalated for
+	 * hitting those limits could otherwise never get.
+	 */
 	public Run resume(Instant now) {
 		if (state != RunState.NEEDS_HUMAN) {
 			throw new IllegalStateException("run " + id + " is not waiting for a human");
 		}
-		return with(resumeState, null, null, now);
+		Run resumed = with(resumeState, null, null, now);
+		return new Run(id, taskId, resumed.state, risk, gatePolicy, null, null, 0, 0, usage, version, createdAt, now);
 	}
 
 	/** Record triage. Only once, while triaging. */

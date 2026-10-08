@@ -35,11 +35,11 @@ public interface RunStore {
 
 	Mono<RunView> find(UUID runId);
 
-	/** Newest first. {@code createdBefore} is an exclusive cursor; null starts from the newest run. */
-	Flux<RunView> list(Set<RunState> states, Instant createdBefore, int limit);
+	/** Newest first by (createdAt, id). {@code before} is an exclusive cursor; null starts from the newest run. */
+	Flux<RunView> list(Set<RunState> states, Cursor before, int limit);
 
-	/** Runs from one origin updated after {@code since}, oldest change first. */
-	Flux<RunView> listUpdatedSince(io.agenticsdlc.core.domain.TaskOrigin origin, Instant since, int limit);
+	/** Runs from one origin changed after {@code after}, by (updatedAt, id), oldest change first. */
+	Flux<RunView> listUpdatedSince(io.agenticsdlc.core.domain.TaskOrigin origin, Cursor after, int limit);
 
 	/** Persist {@code next} if {@code current} is still the stored version; returns the stored instance. */
 	Mono<Run> update(Run current, Run next, List<RunEvent> events);
@@ -53,6 +53,9 @@ public interface RunStore {
 	/** Events with {@code seq > afterSeq}, oldest first. */
 	Flux<RunEvent> events(UUID runId, long afterSeq, int limit);
 
+	/** The newest {@code limit} events of the given types, oldest first. */
+	Flux<RunEvent> latestEvents(UUID runId, Set<io.agenticsdlc.core.domain.RunEventType> types, int limit);
+
 	/** Lease one working run whose lease is free or expired; empty if none is available. */
 	Mono<Run> claim(String owner, Duration lease);
 
@@ -62,5 +65,19 @@ public interface RunStore {
 	Mono<Void> releaseLease(UUID runId, String owner);
 
 	record Submission(RunView view, boolean created) {
+	}
+
+	/**
+	 * A position in a run listing: a timestamp plus the run id breaking ties, so runs sharing a timestamp are neither
+	 * skipped nor repeated across pages. Without an id only the timestamp counts.
+	 */
+	record Cursor(Instant at, UUID id) {
+		public Cursor {
+			java.util.Objects.requireNonNull(at, "at");
+		}
+
+		public static Cursor at(Instant at) {
+			return new Cursor(at, null);
+		}
 	}
 }

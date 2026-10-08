@@ -45,19 +45,35 @@ public class ScmHttp {
 		return token;
 	}
 
+	/** Reads are retried on transient failures. */
 	Mono<JsonNode> get(String url, Consumer<HttpHeaders> headers) {
 		return exchange(client.get().uri(java.net.URI.create(url)).headers(headers).accept(MediaType.APPLICATION_JSON)
-				.retrieve().bodyToMono(JsonNode.class));
+				.retrieve().bodyToMono(JsonNode.class)
+				.timeout(timeout)
+				.retryWhen(Retry.backoff(3, Duration.ofSeconds(1)).filter(ScmHttp::transientFailure)));
 	}
 
+	/**
+	 * Writes are never retried here: a POST that timed out may have succeeded. Callers retry the whole operation,
+	 * starting with a lookup of what already exists (see {@link ScmPullRequests}).
+	 */
 	Mono<JsonNode> post(String url, Consumer<HttpHeaders> headers, Object body) {
 		return exchange(client.post().uri(java.net.URI.create(url)).headers(headers).contentType(MediaType.APPLICATION_JSON)
-				.accept(MediaType.APPLICATION_JSON).bodyValue(body).retrieve().bodyToMono(JsonNode.class));
+				.accept(MediaType.APPLICATION_JSON).bodyValue(body).retrieve().bodyToMono(JsonNode.class)
+				.timeout(timeout));
+	}
+
+	/** Worth repeating a whole find-or-create operation: transient failures, and conflicts from a half-done create. */
+	static boolean retryableOperation(Throwable error) {
+		if (error instanceof ScmException e) {
+			int status = e.status().value();
+			return status == 409 || status == 422 || status == 429 || e.status().is5xxServerError();
+		}
+		return transientFailure(error);
 	}
 
 	private Mono<JsonNode> exchange(Mono<JsonNode> call) {
-		return call.timeout(timeout)
-				.retryWhen(Retry.backoff(3, Duration.ofSeconds(1)).filter(ScmHttp::transientFailure))
+		return call
 				.onErrorMap(WebClientResponseException.class, e -> new ScmException(e.getStatusCode(),
 						e.getRequest() == null ? "" : e.getRequest().getMethod() + " " + e.getRequest().getURI().getPath(),
 						e.getResponseBodyAsString()));

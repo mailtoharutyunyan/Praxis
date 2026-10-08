@@ -38,8 +38,8 @@ public final class RunQueries {
 		return store.find(runId).switchIfEmpty(Mono.error(() -> new RunNotFoundException(runId)));
 	}
 
-	public Flux<RunView> list(Set<RunState> states, Instant createdBefore, int limit) {
-		return store.list(states == null ? Set.of() : states, createdBefore, clamp(limit));
+	public Flux<RunView> list(Set<RunState> states, RunStore.Cursor before, int limit) {
+		return store.list(states == null ? Set.of() : states, before, clamp(limit));
 	}
 
 	public Flux<RunEvent> events(UUID runId, long afterSeq, int limit) {

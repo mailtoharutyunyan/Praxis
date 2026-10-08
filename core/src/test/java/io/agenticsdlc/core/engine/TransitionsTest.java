@@ -141,6 +141,12 @@ class TransitionsTest {
 		Transitions.Step exhausted = apply(run, new StageOutcome.NeedsRework("still failing", Usage.ZERO));
 		assertThat(exhausted.next().state()).isEqualTo(RunState.NEEDS_HUMAN);
 		assertThat(exhausted.next().resumeState()).isEqualTo(RunState.VERIFYING);
+		// A human resuming gets another round of fixes instead of an immediate re-escalation.
+		Run resumed = exhausted.next().resume(T0);
+		assertThat(resumed.state()).isEqualTo(RunState.VERIFYING);
+		assertThat(resumed.fixIterations()).isZero();
+		assertThat(apply(resumed, new StageOutcome.NeedsRework("still red", Usage.ZERO)).next().state())
+				.isEqualTo(RunState.IMPLEMENTING);
 		assertThat(exhausted.next().fixIterations()).isEqualTo(LIMITS.maxFixIterations());
 	}
 

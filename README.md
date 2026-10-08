@@ -155,7 +155,10 @@ Limits:
 - turns per stage (`agentic.agent.max-turns`);
 - the run's token and cost budget, priced from `agentic.models.pricing`;
 - stuck detection (the same call repeated);
-- old tool outputs cleared from context.
+- old tool outputs cleared from context;
+- model calls time out after `agentic.agent.model-timeout` (10 min). Rate limits, overload, 5xx errors, timeouts and I/O errors are retried `model-retries` times (4) with jittered backoff, on top of each SDK's own retries. Usage spent before a stage fails still counts against the budget.
+
+The reviewer's verdict is read only from the last line of its reply, and if triage names several risk levels the highest one wins. Text from outside the operator is wrapped in tagged blocks (`<task>`, `<spec>`, `<guidance>`); any copy of the block's own tag inside the text is escaped, so it cannot close the block early.
 
 `LiveAnthropicSmokeTest` exercises a real tool-call round trip when `ANTHROPIC_API_KEY` is set.
 
@@ -169,7 +172,7 @@ Limits:
 | Verify | Deterministic build and test in the sandbox | Passes on to review (`diff` artifact), or sends the run back to implement |
 | Review | Fresh-context reviewer with read-only tools | `review` artifact. `VERDICT: APPROVE` moves on to the PUBLISH gate; otherwise back to implement. |
 
-Gates show the latest artifacts (`GET /api/v1/runs/{id}/events`, `ARTIFACT_PRODUCED`). Text from tickets and issues is passed to models as data, wrapped in `<task>`, with an explicit instruction to ignore embedded commands. A janitor removes the sandboxes and working copies of finished runs.
+Gates show the latest artifacts (`GET /api/v1/runs/{id}/events`, `ARTIFACT_PRODUCED`). Text from tickets and issues is passed to models as data, wrapped in an escaped `<task>` block, with an explicit instruction to ignore embedded commands. Status comments on tickets never quote failure reasons, which can contain model output; they link to the run instead. A janitor removes the sandboxes and working copies of finished runs.
 
 ## Publishing and pull requests
 Only after a human approves the PUBLISH gate does the PUBLISHING stage:
@@ -259,7 +262,7 @@ All endpoints need a bearer JWT from your OIDC provider (`spring.security.oauth2
 | Method & path | Role | Purpose |
 |---|---|---|
 | `POST /api/v1/tasks` | operator | Submit a task. An optional `Idempotency-Key` header makes retries return the original run. |
-| `GET /api/v1/runs?state=&createdBefore=&limit=` | viewer | List runs, newest first. |
+| `GET /api/v1/runs?state=&createdBefore=&beforeId=&limit=` | viewer | List runs, newest first. Pass a page's `nextCreatedBefore` and `nextBeforeId` to get the next page. |
 | `GET /api/v1/runs/{id}` | viewer | Run with its task, risk, gates and usage. |
 | `GET /api/v1/runs/{id}/events?afterSeq=&limit=` | viewer | Event log page (JSON). |
 | `GET /api/v1/runs/{id}/events` (`Accept: text/event-stream`) | viewer | Live SSE stream. `id` is the event sequence, so `Last-Event-ID` resumes. |

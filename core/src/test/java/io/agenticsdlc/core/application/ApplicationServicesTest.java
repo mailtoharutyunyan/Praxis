@@ -16,6 +16,7 @@ import io.agenticsdlc.core.domain.RunState;
 import io.agenticsdlc.core.domain.Trust;
 import io.agenticsdlc.core.port.ConcurrentRunUpdateException;
 import io.agenticsdlc.core.port.RunStore;
+import io.agenticsdlc.core.port.RunStore.Cursor;
 import io.agenticsdlc.core.support.Fixtures;
 import io.agenticsdlc.core.support.InMemoryRunStore;
 import java.time.Duration;
@@ -252,14 +253,14 @@ class ApplicationServicesTest {
 
 		@Override
 		public reactor.core.publisher.Flux<io.agenticsdlc.core.domain.RunView> list(Set<RunState> states,
-				java.time.Instant createdBefore, int limit) {
-			return delegate.list(states, createdBefore, limit);
+				Cursor before, int limit) {
+			return delegate.list(states, before, limit);
 		}
 
 		@Override
 		public reactor.core.publisher.Flux<io.agenticsdlc.core.domain.RunView> listUpdatedSince(
-				io.agenticsdlc.core.domain.TaskOrigin origin, java.time.Instant since, int limit) {
-			return delegate.listUpdatedSince(origin, since, limit);
+				io.agenticsdlc.core.domain.TaskOrigin origin, Cursor after, int limit) {
+			return delegate.listUpdatedSince(origin, after, limit);
 		}
 
 		@Override
@@ -278,6 +279,12 @@ class ApplicationServicesTest {
 		}
 
 		@Override
+		public reactor.core.publisher.Flux<RunEvent> latestEvents(UUID runId,
+				java.util.Set<io.agenticsdlc.core.domain.RunEventType> types, int limit) {
+			return delegate.latestEvents(runId, types, limit);
+		}
+
+		@Override
 		public Mono<Run> claim(String owner, Duration lease) {
 			return delegate.claim(owner, lease);
 		}
@@ -291,5 +298,14 @@ class ApplicationServicesTest {
 		public Mono<Void> releaseLease(UUID runId, String owner) {
 			return delegate.releaseLease(runId, owner);
 		}
+	}
+
+	@org.junit.jupiter.api.Test
+	void requestersFromOutsideSystemsAreRecognisedByTheirAliases() {
+		assertThat(RunCommands.samePerson("alice", "alice", Set.of())).isTrue();
+		assertThat(RunCommands.samePerson("jira:alice@acme.com", "0f3c-sub", Set.of("Alice@Acme.com"))).isTrue();
+		assertThat(RunCommands.samePerson("jira:admin", "sub-1", Set.of("admin"))).isTrue();
+		assertThat(RunCommands.samePerson("jira:5b10ac8d82e05b22cc7d4ef5", "sub-1", Set.of("bob@acme.com"))).isFalse();
+		assertThat(RunCommands.samePerson("bob", "alice", Set.of("alice@acme.com"))).isFalse();
 	}
 }

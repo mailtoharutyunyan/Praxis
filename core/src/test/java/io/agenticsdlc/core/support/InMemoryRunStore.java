@@ -2,6 +2,7 @@ package io.agenticsdlc.core.support;
 
 import io.agenticsdlc.core.domain.Run;
 import io.agenticsdlc.core.domain.RunEvent;
+import io.agenticsdlc.core.domain.RunEventType;
 import io.agenticsdlc.core.domain.RunState;
 import io.agenticsdlc.core.domain.RunView;
 import io.agenticsdlc.core.domain.Task;
@@ -9,6 +10,7 @@ import io.agenticsdlc.core.port.ConcurrentRunUpdateException;
 import io.agenticsdlc.core.port.LeaseLostException;
 import io.agenticsdlc.core.port.RunChangeSignals;
 import io.agenticsdlc.core.port.RunStore;
+import io.agenticsdlc.core.port.RunStore.Cursor;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -68,11 +70,13 @@ public final class InMemoryRunStore implements RunStore, RunChangeSignals {
 	}
 
 	@Override
-	public synchronized Flux<RunView> list(Set<RunState> states, Instant createdBefore, int limit) {
+	public synchronized Flux<RunView> list(Set<RunState> states, Cursor before, int limit) {
+		Comparator<Run> order = Comparator.comparing(Run::createdAt).thenComparing(Run::id);
 		List<RunView> views = runs.values().stream()
 				.filter(r -> states.isEmpty() || states.contains(r.state()))
-				.filter(r -> createdBefore == null || r.createdAt().isBefore(createdBefore))
-				.sorted(Comparator.comparing(Run::createdAt).reversed())
+				.filter(r -> before == null || (before.id() == null ? r.createdAt().isBefore(before.at())
+						: order.compare(r, cursorRun(before)) < 0))
+				.sorted(order.reversed())
 				.limit(limit)
 				.map(r -> new RunView(r, tasks.get(r.taskId())))
 				.toList();
@@ -80,11 +84,15 @@ public final class InMemoryRunStore implements RunStore, RunChangeSignals {
 	}
 
 	@Override
-	public synchronized Flux<RunView> listUpdatedSince(io.agenticsdlc.core.domain.TaskOrigin origin, Instant since,
+	public synchronized Flux<RunView> listUpdatedSince(io.agenticsdlc.core.domain.TaskOrigin origin, Cursor after,
 			int limit) {
+		Comparator<Run> order = Comparator.comparing(Run::updatedAt).thenComparing(Run::id);
 		return Flux.fromIterable(runs.values().stream()
-				.filter(r -> tasks.get(r.taskId()).origin() == origin && r.updatedAt().isAfter(since))
-				.sorted(Comparator.comparing(Run::updatedAt))
+				.filter(r -> tasks.get(r.taskId()).origin() == origin)
+				.filter(r -> after.id() == null ? r.updatedAt().isAfter(after.at())
+						: r.updatedAt().isAfter(after.at())
+								|| r.updatedAt().equals(after.at()) && r.id().compareTo(after.id()) > 0)
+				.sorted(order)
 				.limit(limit)
 				.map(r -> new RunView(r, tasks.get(r.taskId())))
 				.toList());
@@ -116,6 +124,19 @@ public final class InMemoryRunStore implements RunStore, RunChangeSignals {
 	public synchronized Flux<RunEvent> events(UUID runId, long afterSeq, int limit) {
 		return Flux.fromIterable(events.getOrDefault(runId, List.of()).stream()
 				.filter(e -> e.seq() > afterSeq).limit(limit).toList());
+	}
+
+	@Override
+	public synchronized Flux<RunEvent> latestEvents(UUID runId, Set<RunEventType> types, int limit) {
+		List<RunEvent> matching = events.getOrDefault(runId, List.of()).stream().filter(e -> types.contains(e.type()))
+				.toList();
+		return Flux.fromIterable(matching.subList(Math.max(0, matching.size() - limit), matching.size()));
+	}
+
+	/** A probe run positioned at {@code cursor}, for comparisons by (createdAt, id). */
+	private static Run cursorRun(Cursor cursor) {
+		return new Run(cursor.id(), cursor.id(), RunState.RECEIVED, null, null, null, null, 0, 0,
+				io.agenticsdlc.core.domain.Usage.ZERO, 0, cursor.at(), cursor.at());
 	}
 
 	@Override

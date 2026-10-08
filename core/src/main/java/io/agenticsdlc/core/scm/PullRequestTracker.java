@@ -31,10 +31,19 @@ public final class PullRequestTracker {
 		this.commands = Objects.requireNonNull(commands, "commands");
 	}
 
-	/** Checks every open pull request once; emits the runs that finished. */
+	/** Checks every open pull request once, page by page; emits the runs that finished. */
 	public Flux<UUID> sweep() {
-		return store.list(Set.of(RunState.PR_OPEN), null, BATCH)
-				.concatMap(view -> check(view).onErrorResume(e -> Mono.empty()));
+		return page(null)
+				.expand(page -> page.size() < BATCH ? Mono.empty() : page(cursorOf(page.getLast())))
+				.concatMap(page -> Flux.fromIterable(page).concatMap(view -> check(view).onErrorResume(e -> Mono.empty())));
+	}
+
+	private Mono<java.util.List<RunView>> page(RunStore.Cursor before) {
+		return store.list(Set.of(RunState.PR_OPEN), before, BATCH).collectList();
+	}
+
+	private static RunStore.Cursor cursorOf(RunView view) {
+		return new RunStore.Cursor(view.run().createdAt(), view.run().id());
 	}
 
 	public Mono<UUID> check(RunView view) {
@@ -47,9 +56,8 @@ public final class PullRequestTracker {
 	}
 
 	private Mono<PullRequests.PullRequest> pullRequestOf(UUID runId) {
-		return store.events(runId, 0, Integer.MAX_VALUE)
-				.filter(e -> e.type() == RunEventType.ARTIFACT_PRODUCED
-						&& PublishStage.PULL_REQUEST.equals(e.payload().get("kind")))
+		return store.latestEvents(runId, Set.of(RunEventType.ARTIFACT_PRODUCED), 50)
+				.filter(e -> PublishStage.PULL_REQUEST.equals(e.payload().get("kind")))
 				.last()
 				.map(PullRequestTracker::toPullRequest)
 				.onErrorResume(java.util.NoSuchElementException.class, e -> Mono.empty());

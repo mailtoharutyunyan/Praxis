@@ -25,7 +25,9 @@ import tools.jackson.databind.json.JsonMapper;
  * <ul>
  * <li>Jira admin webhooks ({@code jira:issue_created} / {@code jira:issue_updated}), authenticated by
  * {@code X-Hub-Signature} HMAC over the raw body; a run starts when an issue is created with the trigger label or the
- * label is added. Retries carry the same {@code X-Atlassian-Webhook-Identifier} and map to the same run.</li>
+ * label is added. The trigger is identified by a hash of the signed body (which carries a timestamp): retries resend
+ * the same body and map to the same run, and a replayed body cannot pose as a new event, which an unsigned delivery
+ * id header could.</li>
  * <li>Jira Automation "Send web request" with header {@code X-Agentic-Webhook-Token} (a static secret; not
  * {@code Authorization}, which the API reserves for user JWTs) and body {@code {"key": "{{issue.key}}"}}.</li>
  * </ul>
@@ -50,15 +52,14 @@ class JiraWebhookController {
 	@PostMapping("/api/v1/webhooks/jira")
 	Mono<ResponseEntity<Map<String, Object>>> receive(@RequestBody byte[] body,
 			@RequestHeader(name = "X-Hub-Signature", required = false) String signature,
-			@RequestHeader(name = "X-Agentic-Webhook-Token", required = false) String token,
-			@RequestHeader(name = "X-Atlassian-Webhook-Identifier", required = false) String deliveryId) {
+			@RequestHeader(name = "X-Agentic-Webhook-Token", required = false) String token) {
 		boolean signed = WebhookSignatures.validHubSignature(signature, body, settings.webhookSecret());
 		boolean automation = !signed && WebhookSignatures.validToken(token, settings.automationToken());
 		if (!signed && !automation) {
 			return Mono.just(ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of("error", "invalid signature")));
 		}
 		JsonNode event = json.readTree(body);
-		TicketIntake.Trigger trigger = signed ? fromWebhook(event, deliveryId) : fromAutomation(event);
+		TicketIntake.Trigger trigger = signed ? fromWebhook(event, body) : fromAutomation(event);
 		if (trigger == null) {
 			return Mono.just(ResponseEntity.ok(Map.of("ignored", "not a trigger for label '" + settings.triggerLabel() + "'")));
 		}
@@ -72,7 +73,7 @@ class JiraWebhookController {
 		});
 	}
 
-	private TicketIntake.Trigger fromWebhook(JsonNode event, String deliveryId) {
+	private TicketIntake.Trigger fromWebhook(JsonNode event, byte[] body) {
 		String type = event.path("webhookEvent").asString("");
 		String key = event.path("issue").path("key").asString(null);
 		if (key == null) {
@@ -86,11 +87,15 @@ class JiraWebhookController {
 		if (!triggered) {
 			return null;
 		}
-		String eventId = deliveryId != null && !deliveryId.isBlank() ? deliveryId
-				: event.path("timestamp").asString(String.valueOf(System.currentTimeMillis()));
-		// Cloud identifies users by accountId; Data Center by username.
+		String eventId = WebhookSignatures.sha256(body);
+		// The requester's email when Jira shares it (it matches the approver's token for the four-eyes rule), else
+		// the Cloud accountId or the Data Center username.
 		JsonNode user = event.path("user");
-		return new TicketIntake.Trigger(key, eventId, user.path("accountId").asString(user.path("name").asString(null)));
+		String requester = user.path("emailAddress").asString("");
+		if (requester.isBlank()) {
+			requester = user.path("accountId").asString(user.path("name").asString(null));
+		}
+		return new TicketIntake.Trigger(key, eventId, requester);
 	}
 
 	private TicketIntake.Trigger fromAutomation(JsonNode event) {

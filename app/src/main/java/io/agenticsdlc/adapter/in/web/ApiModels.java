@@ -71,7 +71,8 @@ final class ApiModels {
 			String scmKind, URI cloneUrl, String baseBranch, String trust, String requestedBy, Instant createdAt) {
 	}
 
-	record RunPage(List<RunResponse> items, Instant nextCreatedBefore) {
+	/** Pass both {@code next*} values back as {@code createdBefore} and {@code beforeId} for the next page. */
+	record RunPage(List<RunResponse> items, Instant nextCreatedBefore, UUID nextBeforeId) {
 	}
 
 	record RunEventResponse(long seq, String type, String actor, Map<String, Object> payload, Instant occurredAt) {

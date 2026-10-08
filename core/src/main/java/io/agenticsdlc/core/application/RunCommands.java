@@ -18,6 +18,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 import java.util.function.BiFunction;
 import reactor.core.publisher.Mono;
@@ -42,10 +43,19 @@ public final class RunCommands {
 	}
 
 	public Mono<Run> decide(UUID runId, Gate gate, GateDecision decision, String comment, String actor) {
+		return decide(runId, gate, decision, comment, actor, Set.of());
+	}
+
+	/**
+	 * @param aliases other names of the deciding user (e.g. email and username from their token), matched against the
+	 *        requester of tasks from outside systems, whose ids are not the API's subjects
+	 */
+	public Mono<Run> decide(UUID runId, Gate gate, GateDecision decision, String comment, String actor,
+			Set<String> aliases) {
 		Objects.requireNonNull(gate, "gate");
 		Objects.requireNonNull(decision, "decision");
 		return change(runId, (view, now) -> {
-			if (forbidSelfApproval && actor.equals(view.task().requestedBy())) {
+			if (forbidSelfApproval && samePerson(view.task().requestedBy(), actor, aliases)) {
 				throw new SelfApprovalException(runId, gate);
 			}
 			Run next = view.run().decide(gate, decision, now);
@@ -55,6 +65,19 @@ public final class RunCommands {
 			payload.put("comment", comment);
 			return new Change(next, List.of(event(runId, RunEventType.GATE_DECIDED, actor, payload, now)));
 		}, actor);
+	}
+
+	/**
+	 * API users request tasks as their subject; outside systems as {@code <source>:<their id>}, e.g. {@code jira:alice}
+	 * or {@code jira:alice@acme.com}. Either form matches the approver's subject or one of their aliases, ignoring case.
+	 */
+	static boolean samePerson(String requestedBy, String actor, Set<String> aliases) {
+		if (requestedBy.equals(actor)) {
+			return true;
+		}
+		int colon = requestedBy.indexOf(':');
+		String external = colon < 0 ? requestedBy : requestedBy.substring(colon + 1);
+		return external.equalsIgnoreCase(actor) || aliases.stream().anyMatch(external::equalsIgnoreCase);
 	}
 
 	public Mono<Run> cancel(UUID runId, String reason, String actor) {

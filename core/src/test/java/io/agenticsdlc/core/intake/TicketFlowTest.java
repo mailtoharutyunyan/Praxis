@@ -116,9 +116,24 @@ class TicketFlowTest {
 				RunEvent.of(runId, RunEventType.STATE_CHANGED, "system", Map.of("from", "TRIAGING", "to", "NEEDS_HUMAN"), T0)))
 				.block();
 		updates.sweep().blockLast();
-		assertThat(comments).hasSize(2).last().asString().contains("needs a human: no API key");
+		assertThat(comments).hasSize(2).last().asString().contains("needs a human to continue")
+				.doesNotContain("no API key");
 		updates.sweep().blockLast();
 		assertThat(comments).hasSize(2);
+	}
+
+	@Test
+	void everyChangedRunIsReportedEvenBeyondOnePageAndWithEqualTimestamps() {
+		int runs = TicketUpdates.PAGE + 5;
+		for (int i = 0; i < runs; i++) {
+			ticket("SHOP-" + (100 + i), "SHOP", Set.of("agentic"));
+			intake.onTrigger(new TicketIntake.Trigger("SHOP-" + (100 + i), "e" + i, "a")).block();
+		}
+		TicketUpdates updates = new TicketUpdates(store, jira, sync, TaskOrigin.JIRA, java.time.Clock.offset(CLOCK,
+				Duration.ofSeconds(1)), Duration.ofHours(1), null);
+
+		assertThat(updates.sweep().collectList().block()).hasSize(runs).allMatch(posted -> posted == 1);
+		assertThat(comments).hasSize(runs);
 	}
 
 	@Test

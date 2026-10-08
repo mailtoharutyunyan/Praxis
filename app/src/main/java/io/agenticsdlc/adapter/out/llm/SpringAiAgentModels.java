@@ -23,11 +23,14 @@ class SpringAiAgentModels implements AgentModels {
 	private static final Logger log = LoggerFactory.getLogger(SpringAiAgentModels.class);
 
 	private final AgenticProperties.Models settings;
+	private final SpringAiAgentModel.CallPolicy policy;
 	private final JsonMapper json;
 	private final Map<AgentRole, AgentModel> cache = new EnumMap<>(AgentRole.class);
 
 	SpringAiAgentModels(AgenticProperties properties, JsonMapper json) {
 		this.settings = properties.models();
+		this.policy = new SpringAiAgentModel.CallPolicy(properties.agent().modelTimeout(), properties.agent().modelRetries(),
+				SpringAiAgentModel.CallPolicy.DEFAULT.firstBackoff(), SpringAiAgentModel.CallPolicy.DEFAULT.maxBackoff());
 		this.json = json;
 	}
 
@@ -52,6 +55,6 @@ class SpringAiAgentModels implements AgentModels {
 		}
 		String id = provider.type() + "/" + roleModel.model();
 		log.info("role {} uses {}", key, id);
-		return new SpringAiAgentModel(id, ChatModelFactory.create(provider, roleModel), pricing, json);
+		return new SpringAiAgentModel(id, ChatModelFactory.create(provider, roleModel), pricing, json, policy);
 	}
 }

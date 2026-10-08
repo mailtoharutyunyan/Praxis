@@ -45,7 +45,8 @@ final class GitLabProvider implements ScmPullRequests.Provider {
 		return http.get(project(repo) + "/merge_requests/" + pullRequest.id(), headers(repo))
 				.map(mr -> switch (mr.path("state").asString()) {
 					case "merged" -> PullRequestState.MERGED;
-					case "closed", "locked" -> PullRequestState.CLOSED;
+					case "closed" -> PullRequestState.CLOSED;
+					// "locked" is transient: GitLab holds the merge request while it merges it.
 					default -> PullRequestState.OPEN;
 				});
 	}

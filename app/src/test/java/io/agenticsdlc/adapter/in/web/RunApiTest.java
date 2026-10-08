@@ -221,6 +221,13 @@ class RunApiTest {
 				.exchange().expectStatus().isBadRequest()
 				.expectBody().jsonPath("$.detail").isEqualTo("cloneUrl must use https");
 
+		// Parameter constraints are request errors (400 problem details), not server errors.
+		client.mutateWith(user("v", "viewer")).get().uri("/api/v1/runs?limit=0").exchange()
+				.expectStatus().isBadRequest()
+				.expectHeader().contentType(MediaType.APPLICATION_PROBLEM_JSON);
+		client.mutateWith(user("v", "viewer")).get().uri("/api/v1/runs?limit=100000").exchange()
+				.expectStatus().isBadRequest();
+
 		client.mutateWith(user("v", "viewer")).get().uri("/api/v1/runs/{id}", UUID.randomUUID()).exchange()
 				.expectStatus().isNotFound()
 				.expectBody().jsonPath("$.title").isEqualTo("Run not found");

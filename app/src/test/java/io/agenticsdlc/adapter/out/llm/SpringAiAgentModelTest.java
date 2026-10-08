@@ -139,6 +139,46 @@ class SpringAiAgentModelTest {
 	}
 
 	@Test
+	void transientFailuresAreRetriedOthersAreNot() {
+		java.util.concurrent.atomic.AtomicInteger calls = new java.util.concurrent.atomic.AtomicInteger();
+		ChatResponse ok = response(List.of(generation(AssistantMessage.builder().content("ok").build(), "end_turn")),
+				new DefaultUsage(1, 1));
+		ChatModel flaky = new ChatModel() {
+			@Override
+			public ChatResponse call(Prompt prompt) {
+				if (calls.incrementAndGet() < 3) {
+					throw new org.springframework.ai.retry.TransientAiException("529 overloaded");
+				}
+				return ok;
+			}
+
+			@Override
+			public ChatOptions getOptions() {
+				return chat.getOptions();
+			}
+		};
+		SpringAiAgentModel.CallPolicy fast = new SpringAiAgentModel.CallPolicy(java.time.Duration.ofSeconds(5), 3,
+				java.time.Duration.ofMillis(1), java.time.Duration.ofMillis(5));
+		SpringAiAgentModel retrying = new SpringAiAgentModel("x", flaky, OPUS, JsonMapper.builder().build(), fast);
+		ModelRequest request = new ModelRequest("s", List.of(new AgentMessage.User("hi")), List.of(), 100);
+
+		assertThat(retrying.complete(request).block().text()).isEqualTo("ok");
+		assertThat(calls).hasValue(3);
+
+		calls.set(-100);
+		assertThatThrownBy(() -> retrying.complete(request).block())
+				.isInstanceOf(org.springframework.ai.retry.TransientAiException.class);
+		assertThat(calls).hasValue(-96);
+
+		assertThat(SpringAiAgentModel.transientFailure(new IllegalStateException("x",
+				new java.io.UncheckedIOException(new java.io.IOException("reset"))))).isTrue();
+		assertThat(SpringAiAgentModel.transientFailure(new java.util.concurrent.TimeoutException())).isTrue();
+		assertThat(SpringAiAgentModel.transientFailure(new org.springframework.ai.retry.NonTransientAiException("400")))
+				.isFalse();
+		assertThat(SpringAiAgentModel.transientFailure(new IllegalArgumentException("bad request"))).isFalse();
+	}
+
+	@Test
 	void registryValidatesConfigurationLazily() {
 		AgenticProperties.Models models = new AgenticProperties.Models(
 				Map.of("anthropic", new AgenticProperties.Provider("anthropic", "test-key", "", "", "")),
@@ -173,6 +213,8 @@ class SpringAiAgentModelTest {
 	}
 
 	private static AgenticProperties properties(AgenticProperties.Models models) {
-		return new AgenticProperties(null, null, null, null, null, null, null, null, models, null, null, null);
+		AgenticProperties.Agent agent = new AgenticProperties.Agent(true, 60, 12000, 3, 16000, java.time.Duration.ofMinutes(10),
+				4);
+		return new AgenticProperties(null, null, null, null, null, null, null, null, models, agent, null, null);
 	}
 }

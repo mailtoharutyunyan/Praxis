@@ -11,6 +11,7 @@ import java.time.Clock;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 import reactor.core.publisher.Mono;
 
@@ -22,6 +23,9 @@ public final class StageContext {
 	private final String leaseOwner;
 	private final Clock clock;
 	private final AtomicReference<Usage> spent = new AtomicReference<>(Usage.ZERO);
+	static final int HISTORY_LIMIT = 500;
+	private static final Set<RunEventType> HISTORY_TYPES = Set.of(RunEventType.ARTIFACT_PRODUCED,
+			RunEventType.GATE_DECIDED, RunEventType.STAGE_COMPLETED);
 
 	public StageContext(RunView view, RunStore store, String leaseOwner, Clock clock) {
 		this.view = Objects.requireNonNull(view, "view");
@@ -46,9 +50,13 @@ public final class StageContext {
 		return clock;
 	}
 
-	/** The run's event log so far, oldest first (feedback, artifacts and failures from earlier stages). */
+	/**
+	 * The run's milestones so far, oldest first: artifacts, gate decisions and stage results (feedback, specs and
+	 * failures from earlier stages). Tool calls and command output are left out, and only the newest
+	 * {@value #HISTORY_LIMIT} milestones are read, so long runs stay cheap.
+	 */
 	public Mono<List<RunEvent>> history() {
-		return store.events(run().id(), 0, Integer.MAX_VALUE).collectList();
+		return store.latestEvents(run().id(), HISTORY_TYPES, HISTORY_LIMIT).collectList();
 	}
 
 	/** Record model usage as it happens, so a stage that fails or times out still accounts for it. */

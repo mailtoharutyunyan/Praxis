@@ -6,6 +6,17 @@ spring:
       resourceserver:
         jwt:
           audiences: ${AGENTIC_JWT_AUDIENCE:agentic-sdlc}
+  r2dbc:
+    pool:
+      # Sized for worker loops, live event streams and background jobs; keep max-size x instances below the
+      # database's connection limit. Acquiring fails fast instead of hanging when the pool is exhausted, and
+      # connections are recycled so failovers and proxies with idle timeouts are survived.
+      initial-size: 2
+      max-size: 20
+      max-acquire-time: 10s
+      max-create-connection-time: 10s
+      max-idle-time: 10m
+      max-life-time: 30m
   threads:
     virtual:
       enabled: true

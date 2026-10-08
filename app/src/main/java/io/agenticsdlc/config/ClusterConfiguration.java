@@ -23,6 +23,8 @@ class ClusterConfiguration {
 	@Bean
 	PeriodicJob nodeHeartbeat(R2dbcCoordination coordination, NodeIdentity node, AgenticProperties properties) {
 		java.time.Duration interval = properties.worker().nodeTimeout().dividedBy(3);
-		return new PeriodicJob("node heartbeat", interval, interval, () -> coordination.heartbeat(node.node()), null);
+		// First beat at startup, so a new or restarted node is known to be alive before it claims runs.
+		return new PeriodicJob("node heartbeat", java.time.Duration.ZERO, interval, interval,
+				() -> coordination.heartbeat(node.node()), null);
 	}
 }

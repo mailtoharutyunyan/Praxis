@@ -81,6 +81,33 @@ class ScmPullRequestsTest {
 	}
 
 	@Test
+	void aCreateThatFailedAfterTakingEffectIsFoundNotRepeated() {
+		AtomicBoolean created = new AtomicBoolean();
+		server.on("GET", "/repos/acme/shop/pulls", r -> new FakeScmServer.Response(200, created.get()
+				? "[{\"number\":8,\"html_url\":\"https://github.com/acme/shop/pull/8\"}]" : "[]"))
+				.on("POST", "/repos/acme/shop/pulls", r -> {
+					created.set(true);
+					return new FakeScmServer.Response(502, "{\"message\":\"Bad gateway\"}");
+				});
+		ScmPullRequests prs = new ScmPullRequests(new ScmHttp(WebClient.builder(), Map.of("github.com", "s3cr3t"),
+				Map.of("github.com", server.url()), Duration.ofSeconds(5)), false, Duration.ofMillis(10));
+
+		PullRequests.PullRequest pr = prs.open(view(ScmKind.GITHUB, "https://github.com/acme/shop.git"), OPEN).block();
+
+		assertThat(pr.id()).isEqualTo("8");
+		assertThat(server.requests.stream().filter(r -> r.method().equals("POST")).count()).isEqualTo(1);
+	}
+
+	@Test
+	void gitLabLockedMergeRequestsAreStillOpen() {
+		server.on("GET", "/api/v4/projects/acme%2Fshop/merge_requests/4", r -> new FakeScmServer.Response(200,
+				"{\"iid\":4,\"state\":\"locked\"}"));
+		ScmPullRequests prs = client("gitlab.com", server.url() + "/api/v4");
+		assertThat(prs.state(view(ScmKind.GITLAB, "https://gitlab.com/acme/shop.git"),
+				new PullRequests.PullRequest("4", "u")).block()).isEqualTo(PullRequestState.OPEN);
+	}
+
+	@Test
 	void gitLabUsesEncodedProjectPathAndDraftTitle() {
 		server.on("GET", "/api/v4/projects/group%2Fsub%2Fshop/merge_requests/3", r -> new FakeScmServer.Response(200,
 				"{\"iid\":3,\"state\":\"closed\"}"))

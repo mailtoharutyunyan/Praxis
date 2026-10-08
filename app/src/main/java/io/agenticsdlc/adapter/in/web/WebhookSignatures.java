@@ -36,6 +36,16 @@ final class WebhookSignatures {
 		}
 	}
 
+	/** Hex SHA-256 of a request body, used to identify a signed event. */
+	static String sha256(byte[] body) {
+		try {
+			return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(body));
+		}
+		catch (NoSuchAlgorithmException e) {
+			throw new IllegalStateException(e);
+		}
+	}
+
 	static boolean validToken(String presented, String expected) {
 		if (presented == null || expected == null || expected.isBlank()) {
 			return false;

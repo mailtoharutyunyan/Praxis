@@ -14,6 +14,7 @@ import io.agenticsdlc.core.domain.Task;
 import io.agenticsdlc.core.port.ConcurrentRunUpdateException;
 import io.agenticsdlc.core.port.LeaseLostException;
 import io.agenticsdlc.core.port.RunStore;
+import io.agenticsdlc.core.port.RunStore.Cursor;
 import io.r2dbc.postgresql.codec.Json;
 import java.time.Duration;
 import java.time.Instant;
@@ -91,36 +92,41 @@ class R2dbcRunStore implements RunStore {
 	}
 
 	@Override
-	public Flux<RunView> list(Set<RunState> states, Instant createdBefore, int limit) {
+	public Flux<RunView> list(Set<RunState> states, Cursor before, int limit) {
 		StringBuilder sql = new StringBuilder("select " + RunRows.RUN_COLUMNS + ", " + RunRows.TASK_COLUMNS
 				+ " from runs r join tasks t on t.id = r.task_id where true");
 		if (!states.isEmpty()) {
 			sql.append(" and r.state = any(:states)");
 		}
-		if (createdBefore != null) {
-			sql.append(" and r.created_at < :before");
+		if (before != null) {
+			sql.append(before.id() == null ? " and r.created_at < :at" : " and (r.created_at, r.id) < (:at, :id)");
 		}
 		sql.append(" order by r.created_at desc, r.id desc limit :limit");
 		GenericExecuteSpec spec = db.sql(sql.toString()).bind("limit", limit);
 		if (!states.isEmpty()) {
 			spec = spec.bind("states", states.stream().map(Enum::name).toArray(String[]::new));
 		}
-		if (createdBefore != null) {
-			spec = spec.bind("before", timestamp(createdBefore));
-		}
+		spec = bindCursor(spec, before);
 		return spec.map(row -> new RunView(RunRows.run(row), RunRows.task(row))).all();
 	}
 
 	@Override
-	public Flux<RunView> listUpdatedSince(io.agenticsdlc.core.domain.TaskOrigin origin, Instant since, int limit) {
-		return db.sql("select " + RunRows.RUN_COLUMNS + ", " + RunRows.TASK_COLUMNS
-						+ " from runs r join tasks t on t.id = r.task_id"
-						+ " where t.origin = :origin and r.updated_at > :since order by r.updated_at limit :limit")
+	public Flux<RunView> listUpdatedSince(io.agenticsdlc.core.domain.TaskOrigin origin, Cursor after, int limit) {
+		GenericExecuteSpec spec = db.sql("select " + RunRows.RUN_COLUMNS + ", " + RunRows.TASK_COLUMNS
+						+ " from runs r join tasks t on t.id = r.task_id where t.origin = :origin and "
+						+ (after.id() == null ? "r.updated_at > :at" : "(r.updated_at, r.id) > (:at, :id)")
+						+ " order by r.updated_at, r.id limit :limit")
 				.bind("origin", origin.name())
-				.bind("since", timestamp(since))
-				.bind("limit", limit)
-				.map(row -> new RunView(RunRows.run(row), RunRows.task(row)))
-				.all();
+				.bind("limit", limit);
+		return bindCursor(spec, after).map(row -> new RunView(RunRows.run(row), RunRows.task(row))).all();
+	}
+
+	private static GenericExecuteSpec bindCursor(GenericExecuteSpec spec, Cursor cursor) {
+		if (cursor == null) {
+			return spec;
+		}
+		GenericExecuteSpec bound = spec.bind("at", timestamp(cursor.at()));
+		return cursor.id() == null ? bound : bound.bind("id", cursor.id());
 	}
 
 	@Override
@@ -189,6 +195,23 @@ class R2dbcRunStore implements RunStore {
 				where run_id = :runId and seq > :afterSeq order by seq limit :limit""")
 				.bind("runId", runId)
 				.bind("afterSeq", afterSeq)
+				.bind("limit", limit)
+				.map(row -> new RunEvent(row.get("seq", Long.class), runId,
+						RunEventType.valueOf(row.get("type", String.class)), row.get("actor", String.class),
+						codec.decode(row.get("payload", String.class)),
+						row.get("occurred_at", OffsetDateTime.class).toInstant()))
+				.all();
+	}
+
+	@Override
+	public Flux<RunEvent> latestEvents(UUID runId, Set<RunEventType> types, int limit) {
+		return db.sql("""
+				select * from (
+				    select seq, type, actor, payload::text as payload, occurred_at from run_events
+				    where run_id = :runId and type = any(:types) order by seq desc limit :limit) newest
+				order by seq""")
+				.bind("runId", runId)
+				.bind("types", types.stream().map(Enum::name).toArray(String[]::new))
 				.bind("limit", limit)
 				.map(row -> new RunEvent(row.get("seq", Long.class), runId,
 						RunEventType.valueOf(row.get("type", String.class)), row.get("actor", String.class),

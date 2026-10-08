@@ -1,7 +1,6 @@
 package io.agenticsdlc.core.intake;
 
 import io.agenticsdlc.core.domain.RunEvent;
-import io.agenticsdlc.core.domain.RunEventType;
 import io.agenticsdlc.core.domain.RunView;
 import io.agenticsdlc.core.domain.TaskOrigin;
 import io.agenticsdlc.core.port.RunStore;
@@ -20,7 +19,7 @@ import reactor.core.publisher.Mono;
  */
 public final class TicketUpdates {
 
-	static final int MAX_RUNS_PER_SWEEP = 500;
+	static final int PAGE = 200;
 
 	private final RunStore store;
 	private final TicketSystem tickets;
@@ -46,10 +45,19 @@ public final class TicketUpdates {
 		this.runLinkBase = runLinkBase;
 	}
 
-	/** One pass over recently changed runs from this ticket system; emits how many comments were posted per run. */
+	/**
+	 * One pass over every recently changed run from this ticket system, page by page (no run is starved however many
+	 * there are); emits how many comments were posted per run.
+	 */
 	public Flux<Integer> sweep() {
-		return store.listUpdatedSince(origin, clock.instant().minus(lookback), MAX_RUNS_PER_SWEEP)
-				.concatMap(view -> report(view).onErrorResume(e -> Mono.just(0)));
+		return page(RunStore.Cursor.at(clock.instant().minus(lookback)))
+				.expand(page -> page.size() < PAGE ? Mono.empty()
+						: page(new RunStore.Cursor(page.getLast().run().updatedAt(), page.getLast().run().id())))
+				.concatMap(page -> Flux.fromIterable(page).concatMap(view -> report(view).onErrorResume(e -> Mono.just(0))));
+	}
+
+	private Mono<java.util.List<RunView>> page(RunStore.Cursor after) {
+		return store.listUpdatedSince(origin, after, PAGE).collectList();
 	}
 
 	Mono<Integer> report(RunView view) {
@@ -78,23 +86,15 @@ public final class TicketUpdates {
 					? Optional.of(run + " opened a pull request: " + event.payload().get("url"))
 					: Optional.empty();
 			case STATE_CHANGED -> switch (String.valueOf(event.payload().get("to"))) {
-				case "NEEDS_HUMAN" -> Optional.of(run + " needs a human: " + lastError(event, context));
-				case "FAILED" -> Optional.of(run + " failed: " + lastError(event, context));
+				// Reasons can quote model output or internal errors, so tickets only get the gist; the run has the rest.
+				case "NEEDS_HUMAN" -> Optional.of(run + " needs a human to continue; see the run for the reason.");
+				case "FAILED" -> Optional.of(run + " failed; see the run for the reason.");
 				case "CANCELLED" -> Optional.of(run + " was cancelled.");
 				case "DONE" -> Optional.of(run + " is complete: the pull request was merged.");
 				default -> Optional.empty();
 			};
 			default -> Optional.empty();
 		};
-	}
-
-	private static String lastError(RunEvent stateChange, java.util.List<RunEvent> context) {
-		return context.stream()
-				.filter(e -> e.type() == RunEventType.ERROR && e.seq() < stateChange.seq())
-				.reduce((first, second) -> second)
-				.map(e -> String.valueOf(e.payload().getOrDefault("reason", "see the run's events")))
-				.map(reason -> reason.length() <= 1_000 ? reason : reason.substring(0, 1_000) + "…")
-				.orElse("see the run's events");
 	}
 
 	private String link(UUID runId) {

@@ -110,6 +110,14 @@ class JiraIntakeTest {
 		assertThat(retry.get("runId")).isEqualTo(runId.toString());
 		assertThat(retry.get("created")).isEqualTo(false);
 
+		// The delivery id header is not signed: a replay under a new id is still the same event.
+		Map<?, ?> replay = client().post().uri("/api/v1/webhooks/jira").contentType(MediaType.APPLICATION_JSON)
+				.header("X-Hub-Signature", sign(body)).header("X-Atlassian-Webhook-Identifier", "forged-2")
+				.bodyValue(body).exchange().expectStatus().isAccepted().expectBody(Map.class).returnResult()
+				.getResponseBody();
+		assertThat(replay.get("runId")).isEqualTo(runId.toString());
+		assertThat(replay.get("created")).isEqualTo(false);
+
 		var task = queries.get(runId).block().task();
 		assertThat(task.origin()).isEqualTo(TaskOrigin.JIRA);
 		assertThat(task.trust()).isEqualTo(Trust.UNTRUSTED);

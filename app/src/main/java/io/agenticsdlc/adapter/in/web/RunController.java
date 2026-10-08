@@ -9,6 +9,7 @@ import io.agenticsdlc.adapter.in.web.ApiModels.RunResponse;
 import io.agenticsdlc.config.AgenticProperties;
 import io.agenticsdlc.core.application.RunCommands;
 import io.agenticsdlc.core.application.RunQueries;
+import io.agenticsdlc.core.port.RunStore;
 import io.agenticsdlc.core.domain.Run;
 import io.agenticsdlc.core.domain.RunState;
 import jakarta.validation.Valid;
@@ -18,12 +19,12 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.EnumSet;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 import org.springframework.http.MediaType;
 import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
-import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -35,7 +36,6 @@ import org.springframework.web.bind.annotation.RestController;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
-@Validated
 @RestController
 @RequestMapping("/api/v1/runs")
 class RunController {
@@ -55,15 +55,16 @@ class RunController {
 
 	@GetMapping
 	Mono<RunPage> list(@RequestParam(name = "state", required = false) List<RunState> states,
-			@RequestParam(required = false) Instant createdBefore,
+			@RequestParam(required = false) Instant createdBefore, @RequestParam(required = false) UUID beforeId,
 			@RequestParam(defaultValue = "50") @Min(1) @Max(RunQueries.MAX_PAGE) int limit) {
 		EnumSet<RunState> filter = states == null || states.isEmpty() ? EnumSet.noneOf(RunState.class)
 				: EnumSet.copyOf(states);
-		return queries.list(filter, createdBefore, limit)
+		RunStore.Cursor before = createdBefore == null ? null : new RunStore.Cursor(createdBefore, beforeId);
+		return queries.list(filter, before, limit)
 				.map(RunResponse::of)
 				.collectList()
-				.map(items -> new RunPage(items,
-						items.size() < limit ? null : items.getLast().createdAt()));
+				.map(items -> items.size() < limit ? new RunPage(items, null, null)
+						: new RunPage(items, items.getLast().createdAt(), items.getLast().id()));
 	}
 
 	@GetMapping("/{runId}")
@@ -103,7 +104,20 @@ class RunController {
 	@PostMapping("/{runId}/decisions")
 	Mono<RunResponse> decide(@PathVariable UUID runId, @Valid @RequestBody DecisionRequest request,
 			@AuthenticationPrincipal Jwt user) {
-		return respond(commands.decide(runId, request.gate(), request.decision(), request.comment(), user.getSubject()));
+		return respond(commands.decide(runId, request.gate(), request.decision(), request.comment(), user.getSubject(),
+				aliases(user)));
+	}
+
+	/** Names that identify the user in outside systems, so they cannot approve tickets they filed there. */
+	static Set<String> aliases(Jwt user) {
+		Set<String> aliases = new java.util.HashSet<>();
+		for (String claim : List.of("email", "preferred_username", "upn")) {
+			String value = user.getClaimAsString(claim);
+			if (value != null && !value.isBlank()) {
+				aliases.add(value);
+			}
+		}
+		return aliases;
 	}
 
 	@PostMapping("/{runId}/cancel")

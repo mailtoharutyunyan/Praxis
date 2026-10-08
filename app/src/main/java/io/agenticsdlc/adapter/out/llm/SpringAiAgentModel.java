@@ -8,11 +8,16 @@ import io.agenticsdlc.core.agent.ModelRequest;
 import io.agenticsdlc.core.agent.ToolCall;
 import io.agenticsdlc.core.agent.ToolSpec;
 import io.agenticsdlc.core.domain.Usage;
+import java.io.IOException;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.TimeoutException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.SystemMessage;
@@ -23,10 +28,12 @@ import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.model.Generation;
 import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.model.tool.ToolCallingChatOptions;
+import org.springframework.ai.retry.TransientAiException;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.ai.tool.definition.ToolDefinition;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
+import reactor.util.retry.Retry;
 import tools.jackson.core.JacksonException;
 import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.json.JsonMapper;
@@ -39,23 +46,41 @@ import tools.jackson.databind.json.JsonMapper;
  * {@code getOptions().mutate()}; Anthropic returns thinking in extra generations and keeps signed thinking blocks
  * only on its own assistant message type, so the reply is read from the last generation and that message object is
  * replayed unchanged in later turns.
+ * <p>
+ * Calls get an overall timeout, and transient failures (rate limits, overload, 5xx, timeouts, I/O) are retried with
+ * jittered exponential backoff beyond the provider SDK's own short retries, so a busy provider delays a run instead
+ * of escalating it to a human.
  */
 class SpringAiAgentModel implements AgentModel {
 
 	private static final TypeReference<Map<String, Object>> ARGUMENTS = new TypeReference<>() {
 	};
 	private static final BigDecimal MILLION = BigDecimal.valueOf(1_000_000);
+	private static final Logger log = LoggerFactory.getLogger(SpringAiAgentModel.class);
+
+	/** How each model call is bounded and retried. */
+	record CallPolicy(Duration timeout, int retries, Duration firstBackoff, Duration maxBackoff) {
+		static final CallPolicy DEFAULT = new CallPolicy(Duration.ofMinutes(10), 4, Duration.ofSeconds(5),
+				Duration.ofMinutes(2));
+	}
 
 	private final String id;
 	private final ChatModel chatModel;
 	private final AgenticProperties.Pricing pricing;
 	private final JsonMapper json;
+	private final CallPolicy policy;
 
 	SpringAiAgentModel(String id, ChatModel chatModel, AgenticProperties.Pricing pricing, JsonMapper json) {
+		this(id, chatModel, pricing, json, CallPolicy.DEFAULT);
+	}
+
+	SpringAiAgentModel(String id, ChatModel chatModel, AgenticProperties.Pricing pricing, JsonMapper json,
+			CallPolicy policy) {
 		this.id = id;
 		this.chatModel = chatModel;
 		this.pricing = pricing;
 		this.json = json;
+		this.policy = policy;
 	}
 
 	@Override
@@ -67,7 +92,40 @@ class SpringAiAgentModel implements AgentModel {
 	public Mono<ModelReply> complete(ModelRequest request) {
 		return Mono.fromCallable(() -> chatModel.call(prompt(request)))
 				.subscribeOn(Schedulers.boundedElastic())
+				.timeout(policy.timeout())
+				.retryWhen(Retry.backoff(policy.retries(), policy.firstBackoff())
+						.maxBackoff(policy.maxBackoff())
+						.jitter(0.5)
+						.filter(SpringAiAgentModel::transientFailure)
+						.doBeforeRetry(signal -> log.warn("model {} call failed ({}), retry {} of {}", id,
+								signal.failure().toString(), signal.totalRetries() + 1, policy.retries()))
+						.onRetryExhaustedThrow((spec, signal) -> signal.failure()))
 				.map(this::reply);
+	}
+
+	/** Worth retrying: rate limits, overload, server errors, timeouts and I/O failures, from any provider SDK. */
+	static boolean transientFailure(Throwable error) {
+		for (Throwable t = error; t != null; t = t.getCause() == t ? null : t.getCause()) {
+			if (t instanceof TransientAiException || t instanceof IOException || t instanceof TimeoutException
+					|| t instanceof com.anthropic.errors.AnthropicIoException
+					|| t instanceof com.anthropic.errors.AnthropicRetryableException
+					|| t instanceof com.openai.errors.OpenAIIoException
+					|| t instanceof com.openai.errors.OpenAIRetryableException
+					|| t instanceof com.google.genai.errors.GenAiIOException) {
+				return true;
+			}
+			if (t instanceof com.anthropic.errors.AnthropicServiceException e && retryableStatus(e.statusCode())
+					|| t instanceof com.openai.errors.OpenAIServiceException o && retryableStatus(o.statusCode())
+					|| t instanceof com.google.genai.errors.ApiException g && retryableStatus(g.code())
+					|| t instanceof software.amazon.awssdk.core.exception.SdkException s && s.retryable()) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	private static boolean retryableStatus(int status) {
+		return status == 408 || status == 409 || status == 429 || status >= 500;
 	}
 
 	Prompt prompt(ModelRequest request) {
