@@ -64,6 +64,9 @@ record ClaudeCodeCommand(String line, Map<String, String> env) {
 		String missing = "Claude Code is not installed at " + binary + " in this sandbox (see the README, Agents on an "
 				+ "AI CLI)";
 		String line = "[ -x " + shellQuote(binary) + " ] || { echo " + shellQuote(missing) + " >&2; exit 127; }; "
+				// Scrubbing credentials from tool subprocesses needs bubblewrap, which toolchain images rarely have;
+				// without it Claude Code refuses to start, so scrub only where it can.
+				+ "if command -v bwrap >/dev/null 2>&1; then export CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1; fi; "
 				+ "printf '%s' " + shellQuote("{\"disableAllHooks\":true}") + " > " + shellQuote(dir + "/settings.json")
 				+ " && printf '%s' " + shellQuote("{\"mcpServers\":{}}") + " > " + shellQuote(dir + "/mcp.json")
 				+ " && exec " + args.stream().map(arg -> shellQuote(arg)).collect(Collectors.joining(" "))
@@ -100,7 +103,10 @@ record ClaudeCodeCommand(String line, Map<String, String> env) {
 		};
 	}
 
-	/** Credential, scratch configuration, no telemetry or updates, and credentials scrubbed from tool subprocesses. */
+	/**
+	 * Credential, scratch configuration, no telemetry or updates. Credentials are scrubbed from tool subprocesses only
+	 * when the image has bubblewrap (see {@link #of}).
+	 */
 	static Map<String, String> environment(String token) {
 		Map<String, String> env = new LinkedHashMap<>();
 		env.put(token.startsWith(API_KEY_PREFIX) ? "ANTHROPIC_API_KEY" : "CLAUDE_CODE_OAUTH_TOKEN", token);
@@ -110,7 +116,6 @@ record ClaudeCodeCommand(String line, Map<String, String> env) {
 		env.put("DISABLE_ERROR_REPORTING", "1");
 		env.put("DISABLE_AUTOUPDATER", "1");
 		env.put("DISABLE_UPDATES", "1");
-		env.put("CLAUDE_CODE_SUBPROCESS_ENV_SCRUB", "1");
 		return env;
 	}
 

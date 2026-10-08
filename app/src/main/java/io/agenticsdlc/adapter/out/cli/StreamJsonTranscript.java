@@ -174,8 +174,22 @@ final class StreamJsonTranscript {
 				: "Claude Code exited with code " + command.exitCode()
 						+ (command.exitCode() == 127 ? " (not installed, or built for another C library: alpine images "
 								+ "need the musl build)" : "");
-		String stderr = redact(command.tail(1_000)).strip();
+		String stderr = redact(errorLines(command.output())).strip();
 		return new Outcome(Stop.FAILED, stderr.isEmpty() ? reason : reason + ": " + stderr, finalUsage(), messages.size());
+	}
+
+	/**
+	 * The lines that say what went wrong. A crash of the CLI prints its bundled source around the failing line, so
+	 * the end of the output is code; lines starting with {@code error:} carry the message. Falls back to the tail.
+	 */
+	static String errorLines(String output) {
+		String errors = output.lines().map(String::strip).filter(l -> l.regionMatches(true, 0, "error:", 0, 6)
+				|| l.regionMatches(true, 0, "error ", 0, 6)).distinct().limit(5)
+				.collect(java.util.stream.Collectors.joining("\n"));
+		if (!errors.isEmpty()) {
+			return errors.length() <= 1_000 ? errors : errors.substring(0, 1_000) + "…";
+		}
+		return output.length() <= 1_000 ? output : "…" + output.substring(output.length() - 1_000);
 	}
 
 	/** The result's usage and cost where known, never less than was streamed; anything not yet recorded is recorded. */

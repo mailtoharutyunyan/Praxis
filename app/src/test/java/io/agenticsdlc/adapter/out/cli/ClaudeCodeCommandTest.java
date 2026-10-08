@@ -42,8 +42,11 @@ class ClaudeCodeCommandTest {
 				.endsWith("< '" + DIR + "/brief.md'");
 		assertThat(command(Access.FULL).env()).containsEntry("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1")
 				.containsEntry("DISABLE_TELEMETRY", "1").containsEntry("DISABLE_AUTOUPDATER", "1")
-				.containsEntry("CLAUDE_CODE_SUBPROCESS_ENV_SCRUB", "1")
-				.containsEntry("CLAUDE_CONFIG_DIR", ClaudeCodeCommand.CONFIG);
+				.containsEntry("CLAUDE_CONFIG_DIR", ClaudeCodeCommand.CONFIG)
+				.doesNotContainKey("CLAUDE_CODE_SUBPROCESS_ENV_SCRUB");
+		// Scrubbing needs bubblewrap; without it Claude Code would refuse to start.
+		assertThat(command(Access.FULL).line())
+				.contains("if command -v bwrap >/dev/null 2>&1; then export CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1; fi;");
 		assertThat(ClaudeCodeCommand.of("/c", TOKEN, "", 5, Access.READ_ONLY, DIR, null).line())
 				.doesNotContain("--model", "--max-budget-usd");
 	}

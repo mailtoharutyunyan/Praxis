@@ -14,7 +14,7 @@ Facts this design rests on, checked against the Claude Code docs (code.claude.co
 - Unattended runs: `--permission-mode dontAsk` denies anything not allowed. `--permission-prompts none` (2.1.259+) stops it from retrying.
 - Untrusted repositories: `--setting-sources user` keeps project settings and `.mcp.json` out.
 - Credentials: `CLAUDE_CODE_OAUTH_TOKEN` takes a one-year token from `claude setup-token` (Pro, Max, Team or Enterprise plan), and `ANTHROPIC_API_KEY` takes an API key, which wins if both are set.
-- Environment: `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1` strips credentials from Bash and hook subprocesses. `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`, `DISABLE_TELEMETRY` and `DISABLE_ERROR_REPORTING` switch off everything but model calls. `HTTPS_PROXY` is honoured.
+- Environment: `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1` strips credentials from Bash and hook subprocesses, but requires bubblewrap; found in the first live run (2026-10-09), Claude Code exits with "bubblewrap is required for subprocess env scrubbing" when it is missing, so it is set only when `bwrap` is on the path. `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`, `DISABLE_TELEMETRY` and `DISABLE_ERROR_REPORTING` switch off everything but model calls. `HTTPS_PROXY` is honoured.
 - Distribution: the native build is a self-contained binary per platform (`linux-x64`, `linux-arm64` and `-musl` variants), listed with SHA-256 checksums in `downloads.claude.ai/claude-code-releases/<version>/manifest.json`.
 
 ## Decision
@@ -59,7 +59,7 @@ Facts this design rests on, checked against the Claude Code docs (code.claude.co
   - It lives only in the environment of the one exec that runs the CLI. It is never in the container's environment, in a command line or in a log.
   - Everything recorded passes through redaction: events, final text, failure messages and the stderr tail.
   - After an edit-capable call, a change that contains the token fails the call.
-  - `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB` keeps the token out of tool subprocesses. It is documented for API keys; whether it covers `CLAUDE_CODE_OAUTH_TOKEN` is not.
+  - `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB` keeps the token out of tool subprocesses only where the image has bubblewrap. It is documented for API keys; whether it covers `CLAUDE_CODE_OAUTH_TOKEN` is not.
 - **The coder can reach the token.** Its shell runs as the same user as the CLI, so it can read the token from the CLI's process. That is the inherent cost of running the harness next to the code, and why the next rule exists.
 - **Untrusted tasks never run on the CLI.** That covers Jira, Slack, MCP and issues (`Trust.UNTRUSTED`).
   - They run on the API engine instead, if the connector also has an API key or a keyless provider.

@@ -37,6 +37,16 @@ class StreamJsonTranscriptTest {
 	}
 
 	@Test
+	void aCrashReportsTheErrorLineNotTheBundledSourceAroundIt() {
+		String crash = " 9 | // (c) Anthropic PBC.\n11 | import{Me}from\"/$bunfs/root/chunk-1.js\";import{V}from\"/$bunfs/root/c.js\"\n"
+				+ "error: bubblewrap is required for subprocess env scrubbing and isolation.\n"
+				+ "      at /$bunfs/root/chunk-2.js:1:2\n";
+		assertThat(StreamJsonTranscript.errorLines(crash))
+				.isEqualTo("error: bubblewrap is required for subprocess env scrubbing and isolation.");
+		assertThat(StreamJsonTranscript.errorLines("plain failure")).isEqualTo("plain failure");
+	}
+
+	@Test
 	void recordsWhatTheAgentLoopWouldAndTheResult() throws IOException {
 		StreamJsonTranscript transcript = transcript(1_000_000);
 		feed(transcript, lines());

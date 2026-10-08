@@ -142,7 +142,8 @@ class ClaudeCodePipelineTest {
 
 			String log = inSandbox(id, "cat /tmp/fake-claude.log");
 			assertThat(log).doesNotContain(TOKEN)
-					.contains("env: token=set telemetry=1 nonessential=1 scrub=1 config=/tmp/.agentic-cli/config",
+					// The test image has no bubblewrap, so tool subprocesses are not scrubbed (Claude Code would not start).
+					.contains("env: token=set telemetry=1 nonessential=1 scrub= config=/tmp/.agentic-cli/config",
 							"--model claude-sonnet-5-5", "--permission-mode dontAsk", "system: has the engine note");
 			assertThat(log.lines().filter(line -> line.startsWith("args: "))).hasSize(4);
 			assertThat(inSandbox(id, "env")).as("the token is not in the container's environment").doesNotContain(TOKEN);
