@@ -4,12 +4,16 @@ import java.nio.charset.StandardCharsets;
 import java.security.InvalidKeyException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.Base64;
 import java.util.HexFormat;
 import java.util.Locale;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 
-/** Constant-time verification of webhook signatures ({@code X-Hub-Signature: sha256=<hex>}) and shared tokens. */
+/**
+ * Constant-time verification of webhook signatures ({@code X-Hub-Signature: sha256=<hex>}), shared tokens and basic
+ * authentication passwords.
+ */
 final class WebhookSignatures {
 
 	private WebhookSignatures() {
@@ -43,6 +47,22 @@ final class WebhookSignatures {
 		}
 		catch (NoSuchAlgorithmException e) {
 			throw new IllegalStateException(e);
+		}
+	}
+
+	/** HTTP basic authentication ({@code Authorization: Basic base64(user:password)}); only the password counts. */
+	static boolean validBasicPassword(String authorization, String expected) {
+		if (authorization == null || !authorization.regionMatches(true, 0, "Basic ", 0, 6)) {
+			return false;
+		}
+		try {
+			String credentials = new String(Base64.getDecoder().decode(authorization.substring(6).trim()),
+					StandardCharsets.UTF_8);
+			int colon = credentials.indexOf(':');
+			return colon >= 0 && validToken(credentials.substring(colon + 1), expected);
+		}
+		catch (IllegalArgumentException e) {
+			return false;
 		}
 	}
 

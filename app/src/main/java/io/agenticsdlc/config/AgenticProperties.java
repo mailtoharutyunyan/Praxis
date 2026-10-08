@@ -172,12 +172,16 @@ public record AgenticProperties(@Valid @NotNull Worker worker, @Valid @NotNull L
 	 * @param mention how reviewers address the bot in a pull request comment
 	 * @param githubSecret secret of the GitHub webhook ({@code X-Hub-Signature-256}); empty disables the endpoint
 	 * @param gitlabToken secret token of the GitLab webhook ({@code X-Gitlab-Token}); empty disables the endpoint
+	 * @param bitbucketSecret secret of the Bitbucket Cloud webhook ({@code X-Hub-Signature}); empty disables the endpoint
+	 * @param azureDevOpsSecret password of the Azure DevOps service hook's basic authentication; empty disables the
+	 * endpoint
 	 * @param maxRevisions revision rounds per run, from any source
 	 * @param maxCiFixes revision rounds per run triggered by failed CI
 	 * @param runLinkBase prefix for links to a run in replies, e.g. {@code https://agentic.example.com/#/runs/}
 	 */
 	public record Feedback(@DefaultValue("@agentic-sdlc") @NotBlank String mention, @DefaultValue("") String githubSecret,
-			@DefaultValue("") String gitlabToken, @DefaultValue("5") @Min(1) int maxRevisions,
+			@DefaultValue("") String gitlabToken, @DefaultValue("") String bitbucketSecret,
+			@DefaultValue("") String azureDevOpsSecret, @DefaultValue("5") @Min(1) int maxRevisions,
 			@DefaultValue("3") @Min(0) int maxCiFixes, @DefaultValue("") String runLinkBase) {
 	}
 

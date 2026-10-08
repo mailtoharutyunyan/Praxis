@@ -3,6 +3,7 @@ package io.agenticsdlc.adapter.in.web;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.nio.charset.StandardCharsets;
+import java.util.Base64;
 import org.junit.jupiter.api.Test;
 
 class WebhookSignaturesTest {
@@ -35,5 +36,19 @@ class WebhookSignaturesTest {
 		assertThat(WebhookSignatures.validToken("t0k3n-x", "t0k3n")).isFalse();
 		assertThat(WebhookSignatures.validToken(null, "t0k3n")).isFalse();
 		assertThat(WebhookSignatures.validToken("", "")).isFalse();
+	}
+
+	@Test
+	void basicAuthenticationChecksOnlyThePassword() {
+		String good = "Basic " + Base64.getEncoder().encodeToString("any-user:s3cr3t:with-colon".getBytes(StandardCharsets.UTF_8));
+		assertThat(WebhookSignatures.validBasicPassword(good, "s3cr3t:with-colon")).isTrue();
+		assertThat(WebhookSignatures.validBasicPassword(good.replace("Basic", "basic"), "s3cr3t:with-colon")).isTrue();
+		assertThat(WebhookSignatures.validBasicPassword(good, "s3cr3t")).isFalse();
+		assertThat(WebhookSignatures.validBasicPassword(good, "")).isFalse();
+		assertThat(WebhookSignatures.validBasicPassword("Bearer s3cr3t", "s3cr3t")).isFalse();
+		assertThat(WebhookSignatures.validBasicPassword("Basic not-base64!", "s3cr3t")).isFalse();
+		assertThat(WebhookSignatures.validBasicPassword("Basic " + Base64.getEncoder().encodeToString("no-colon"
+				.getBytes(StandardCharsets.UTF_8)), "no-colon")).isFalse();
+		assertThat(WebhookSignatures.validBasicPassword(null, "s3cr3t")).isFalse();
 	}
 }

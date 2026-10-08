@@ -9,6 +9,7 @@ import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -26,6 +27,10 @@ import tools.jackson.databind.json.JsonMapper;
  * {@code pull_request_review} mentioning the bot; {@code workflow_run} completed with a failure.</li>
  * <li>GitLab ({@code X-Gitlab-Token}): {@code Note Hook} on merge requests mentioning the bot; failed
  * {@code Pipeline Hook}.</li>
+ * <li>Bitbucket Cloud ({@code X-Hub-Signature}): {@code pullrequest:comment_created} mentioning the bot; a
+ * {@code FAILED} build status ({@code repo:commit_status_created} or {@code repo:commit_status_updated}).</li>
+ * <li>Azure DevOps service hooks (basic authentication; the password is the secret): pull request commented on
+ * ({@code ms.vss-code.git-pullrequest-comment-event}) mentioning the bot; a failed {@code build.complete}.</li>
  * </ul>
  * Everything else is acknowledged and ignored, so hosts do not retry or disable the hook.
  */
@@ -108,6 +113,111 @@ class ScmWebhookController {
 			default -> ignored("event " + event + " is not used");
 		};
 		return respond(result);
+	}
+
+	@PostMapping("/api/v1/webhooks/bitbucket")
+	Mono<ResponseEntity<Map<String, Object>>> bitbucket(@RequestBody byte[] body,
+			@RequestHeader(name = "X-Hub-Signature", required = false) String signature,
+			@RequestHeader(name = "X-Event-Key", required = false) String event) {
+		if (!WebhookSignatures.validHubSignature(signature, body, settings.feedback().bitbucketSecret())) {
+			return unauthorized();
+		}
+		JsonNode payload = json.readTree(body);
+		Mono<Result> result = switch (event == null ? "" : event) {
+			case "pullrequest:comment_created" -> {
+				JsonNode comment = payload.path("comment");
+				JsonNode actor = payload.path("actor");
+				// The bot's own comments never trigger it; only people have the actor type "user".
+				String text = "user".equals(actor.path("type").asString("user"))
+						? comment.path("content").path("raw").asString("") : "";
+				yield comment(new Comment("bitbucket", comment.path("id").asString(),
+						payload.path("pullrequest").path("links").path("html").path("href").asString(""),
+						actor.path("display_name").asString("unknown"), actor.path("uuid").asString(""), text,
+						location(comment.path("inline").path("path").asString(null),
+								comment.path("inline").path("to").asString(null)),
+						comment.path("links").path("html").path("href").asString(null)));
+			}
+			case "repo:commit_status_created", "repo:commit_status_updated" -> {
+				JsonNode status = payload.path("commit_status");
+				String commit = bitbucketCommit(status);
+				yield "FAILED".equals(status.path("state").asString("")) && !commit.isEmpty()
+						? ci(new CiFailure("bitbucket", commit + "/" + status.path("key").asString(""),
+								status.path("refname").asString(""), commit, status.path("url").asString(""),
+								payload.path("repository").path("links").path("html").path("href").asString(null)))
+						: ignored("not a failed build status");
+			}
+			default -> ignored("event " + event + " is not used");
+		};
+		return respond(result);
+	}
+
+	/**
+	 * The commit a status is for: {@code commit.hash} in delivered payloads, else the end of the documented
+	 * {@code links.commit.href} ({@code .../commit/<hash>}).
+	 */
+	private static String bitbucketCommit(JsonNode status) {
+		String hash = status.path("commit").path("hash").asString("");
+		if (!hash.isEmpty()) {
+			return hash;
+		}
+		String link = status.path("links").path("commit").path("href").asString("");
+		int at = link.lastIndexOf("/commit/");
+		return at < 0 ? "" : link.substring(at + "/commit/".length());
+	}
+
+	@PostMapping("/api/v1/webhooks/azure-devops")
+	Mono<ResponseEntity<Map<String, Object>>> azureDevOps(@RequestBody byte[] body,
+			@RequestHeader(name = HttpHeaders.AUTHORIZATION, required = false) String authorization) {
+		if (!WebhookSignatures.validBasicPassword(authorization, settings.feedback().azureDevOpsSecret())) {
+			return unauthorized();
+		}
+		JsonNode payload = json.readTree(body);
+		String event = payload.path("eventType").asString("");
+		JsonNode resource = payload.path("resource");
+		Mono<Result> result = switch (event) {
+			case "ms.vss-code.git-pullrequest-comment-event" -> {
+				JsonNode comment = resource.path("comment");
+				String pullRequestUrl = azurePullRequestUrl(resource.path("pullRequest"));
+				// Comment ids restart at 1 in every thread; the thread id is the end of the thread's API link.
+				String threads = comment.path("_links").path("threads").path("href").asString("");
+				String thread = threads.substring(threads.lastIndexOf('/') + 1);
+				yield "system".equals(comment.path("commentType").asString(""))
+						? ignored("a system comment")
+						: comment(new Comment("azure-devops", (thread.isEmpty() ? "" : thread + ".")
+								+ comment.path("id").asString(), pullRequestUrl,
+								comment.path("author").path("displayName").asString("unknown"),
+								comment.path("author").path("id").asString(""), comment.path("content").asString(""),
+								null, thread.isEmpty() ? pullRequestUrl : pullRequestUrl + "?discussionId=" + thread));
+			}
+			case "build.complete" -> {
+				JsonNode repository = resource.path("repository");
+				if (!"failed".equals(resource.path("result").asString(""))) {
+					yield ignored("not a failed build");
+				}
+				yield "TfsGit".equals(repository.path("type").asString(""))
+						? ci(new CiFailure("azure-devops", resource.path("id").asString(),
+								resource.path("sourceBranch").asString("").replaceFirst("^refs/heads/", ""),
+								resource.path("sourceVersion").asString(""),
+								resource.path("_links").path("web").path("href").asString(""),
+								repository.path("url").asString(null)))
+						: ignored("not a build of an Azure Repos repository");
+			}
+			default -> ignored("event " + event + " is not used");
+		};
+		return respond(result);
+	}
+
+	/**
+	 * The pull request's web URL as it was recorded when it was opened ({@code <repository web URL>/pullrequest/<id>}):
+	 * the event's web link without its {@code #view=...} fragment, else the repository's remote URL without a user name.
+	 */
+	private static String azurePullRequestUrl(JsonNode pullRequest) {
+		String web = pullRequest.path("_links").path("web").path("href").asString("");
+		if (!web.isEmpty()) {
+			return web.replaceFirst("[?#].*$", "");
+		}
+		String remote = pullRequest.path("repository").path("remoteUrl").asString("").replaceFirst("//[^/@]+@", "//");
+		return remote + "/pullrequest/" + pullRequest.path("pullRequestId").asString();
 	}
 
 	/** The bot's own comments never trigger it; GitHub marks app and bot accounts as type "Bot". */

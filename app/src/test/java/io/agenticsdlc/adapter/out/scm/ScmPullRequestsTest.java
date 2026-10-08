@@ -165,6 +165,98 @@ class ScmPullRequestsTest {
 	}
 
 	@Test
+	void bitbucketCanWriteReadsTheEffectivePermissionOfThatUser() {
+		server.on("GET", "/2.0/workspaces/ws/permissions/repositories/shop", r -> new FakeScmServer.Response(200,
+				r.uri().contains("%7Bbob%7D")
+						? "{\"values\":[{\"permission\":\"write\",\"user\":{\"uuid\":\"{bob}\"}}]}"
+						: "{\"values\":[{\"permission\":\"read\",\"user\":{\"uuid\":\"{eve}\"}}]}"));
+		ScmPullRequests prs = client("bitbucket.org", server.url() + "/2.0");
+		RunView view = view(ScmKind.BITBUCKET, "https://bitbucket.org/ws/shop.git");
+
+		assertThat(prs.canWrite(view, "{bob}").block()).isTrue();
+		assertThat(prs.canWrite(view, "{eve}").block()).isFalse();
+		assertThat(server.requests.getFirst().uri()).contains("q=user.uuid%3D%22%7Bbob%7D%22");
+		assertThat(server.requests.getFirst().header("Authorization")).isEqualTo("Bearer s3cr3t");
+	}
+
+	@Test
+	void bitbucketPipelinesBuildYieldsFailedStepsWithTheirLogs() {
+		server.on("GET", "/2.0/repositories/ws/shop/commit/abc123/statuses/build/77", r -> new FakeScmServer.Response(200,
+				"{\"key\":\"77\",\"state\":\"FAILED\",\"name\":\"Pipeline #12 for agent/r1\","
+						+ "\"url\":\"https://bitbucket.org/ws/shop/addon/pipelines/home#!/results/12\"}"))
+				.on("GET", "/2.0/repositories/ws/shop/pipelines", r -> new FakeScmServer.Response(200,
+						"{\"values\":[{\"uuid\":\"{p-11}\",\"build_number\":11},{\"uuid\":\"{p-12}\",\"build_number\":12}]}"))
+				.on("GET", "/2.0/repositories/ws/shop/pipelines/%7Bp-12%7D/steps", r -> new FakeScmServer.Response(200,
+						"{\"values\":[{\"uuid\":\"{s-1}\",\"name\":\"Lint\",\"state\":{\"name\":\"COMPLETED\","
+								+ "\"result\":{\"name\":\"SUCCESSFUL\"}}},{\"uuid\":\"{s-2}\",\"name\":\"Test\","
+								+ "\"state\":{\"name\":\"COMPLETED\",\"result\":{\"name\":\"FAILED\"}}}]}"))
+				.on("GET", "/2.0/repositories/ws/shop/pipelines/%7Bp-12%7D/steps/%7Bs-2%7D/log", r ->
+						new FakeScmServer.Response(307, "", "/storage/step-2.log"))
+				.on("GET", "/storage/step-2.log", r -> new FakeScmServer.Response(200, "+ mvn verify\n[ERROR] FooTest"));
+		ScmPullRequests prs = client("bitbucket.org", server.url() + "/2.0");
+
+		assertThat(prs.failedJobs(view(ScmKind.BITBUCKET, "https://bitbucket.org/ws/shop.git"), "abc123/77").block())
+				.containsExactly(new PullRequests.FailedJob("Test", "", "+ mvn verify\n[ERROR] FooTest"));
+		assertThat(server.requests).filteredOn(r -> r.uri().contains("/pipelines?")).singleElement()
+				.satisfies(r -> assertThat(r.uri()).contains("target.commit.hash=abc123"));
+		assertThat(server.requests).filteredOn(r -> r.uri().startsWith("/storage/")).singleElement()
+				.satisfies(r -> assertThat(r.header("Authorization")).isNull());
+	}
+
+	@Test
+	void bitbucketBuildFromAnotherCiServerYieldsItsStatus() {
+		server.on("GET", "/2.0/repositories/ws/shop/commit/abc123/statuses/build/jenkins%2Fci", r ->
+				new FakeScmServer.Response(200, "{\"key\":\"jenkins/ci\",\"state\":\"FAILED\",\"name\":\"Jenkins\","
+						+ "\"description\":\"3 tests failed\",\"url\":\"https://ci.example.com/job/7\"}"));
+		ScmPullRequests prs = client("bitbucket.org", server.url() + "/2.0");
+		RunView view = view(ScmKind.BITBUCKET, "https://bitbucket.org/ws/shop.git");
+
+		assertThat(prs.failedJobs(view, "abc123/jenkins/ci").block()).containsExactly(
+				new PullRequests.FailedJob("Jenkins", "https://ci.example.com/job/7", "3 tests failed"));
+		assertThat(prs.failedJobs(view, "no-key").block()).isEmpty();
+	}
+
+	@Test
+	void azureDevOpsCanWriteEvaluatesTheRepositoryAclForTheIdentity() {
+		server.on("GET", "/org/Proj/_apis/git/repositories/repo", r -> new FakeScmServer.Response(200,
+				"{\"id\":\"repo-guid\",\"webUrl\":\"https://dev.azure.com/org/Proj/_git/repo\",\"project\":{\"id\":\"proj-guid\"}}"))
+				.on("GET", "/org/_apis/identities", r -> new FakeScmServer.Response(200, r.uri().contains("bob-id")
+						? "{\"value\":[{\"id\":\"bob-id\",\"descriptor\":\"Microsoft.IdentityModel.Claims.ClaimsIdentity;t\\\\bob\"}]}"
+						: r.uri().contains("eve-id")
+								? "{\"value\":[{\"id\":\"eve-id\",\"descriptor\":\"Microsoft.IdentityModel.Claims.ClaimsIdentity;t\\\\eve\"}]}"
+								: "{\"value\":[]}"))
+				.on("GET", "/org/_apis/accesscontrollists/" + AzureDevOpsProvider.GIT_REPOSITORIES_NAMESPACE, r ->
+						new FakeScmServer.Response(200, r.uri().contains("bob")
+								? "{\"value\":[{\"acesDictionary\":{\"d\":{\"extendedInfo\":{\"effectiveAllow\":16502,\"effectiveDeny\":0}}}}]}"
+								: "{\"value\":[{\"acesDictionary\":{\"d\":{\"extendedInfo\":{\"effectiveAllow\":6,\"effectiveDeny\":4}}}}]}"));
+		ScmPullRequests prs = client("dev.azure.com", server.url() + "/org");
+		RunView view = view(ScmKind.AZURE_DEVOPS, "https://dev.azure.com/org/Proj/_git/repo");
+
+		assertThat(prs.canWrite(view, "bob-id").block()).isTrue();
+		assertThat(prs.canWrite(view, "eve-id").block()).as("an explicit deny wins").isFalse();
+		assertThat(prs.canWrite(view, "nobody").block()).isFalse();
+		assertThat(server.requests).filteredOn(r -> r.uri().contains("/accesscontrollists/")).first()
+				.satisfies(r -> assertThat(r.uri()).contains("token=repoV2%2Fproj-guid%2Frepo-guid", "includeExtendedInfo=true"));
+	}
+
+	@Test
+	void azureDevOpsBuildYieldsFailedTasksFromItsTimeline() {
+		server.on("GET", "/org/Proj/_apis/build/builds/42/timeline", r -> new FakeScmServer.Response(200, """
+				{"records":[
+				 {"id":"job","type":"Job","name":"Build","result":"failed","log":{"id":3}},
+				 {"id":"t1","parentId":"job","type":"Task","name":"Checkout","result":"succeeded","log":{"id":4}},
+				 {"id":"t2","parentId":"job","type":"Task","name":"Maven verify","result":"failed","log":{"id":5}}]}"""))
+				.on("GET", "/org/Proj/_apis/build/builds/42/logs/5", r -> new FakeScmServer.Response(200,
+						"##[section]Starting: Maven verify\n[ERROR] FooTest"));
+		ScmPullRequests prs = client("dev.azure.com", server.url() + "/org");
+
+		assertThat(prs.failedJobs(view(ScmKind.AZURE_DEVOPS, "https://dev.azure.com/org/Proj/_git/repo"), "42").block())
+				.containsExactly(new PullRequests.FailedJob("Build / Maven verify", "",
+						"##[section]Starting: Maven verify\n[ERROR] FooTest"));
+		assertThat(server.requests.getLast().header("Accept")).isEqualTo("text/plain");
+	}
+
+	@Test
 	void errorsCarryStatusButNeverTheToken() {
 		server.on("GET", "/repos/acme/shop/pulls", r -> new FakeScmServer.Response(403, "{\"message\":\"Resource not accessible\"}"));
 		ScmPullRequests prs = client("github.com", server.url());

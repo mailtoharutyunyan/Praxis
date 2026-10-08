@@ -19,16 +19,18 @@ public interface PullRequests {
 	}
 
 	/**
-	 * Whether {@code user} may push to the task's repository: its login on GitHub, its numeric id on GitLab. Only
-	 * such users can ask the agent for changes from a pull request comment. False when it cannot be determined.
+	 * Whether {@code user} may push to the task's repository: its login on GitHub, its numeric id on GitLab, its
+	 * account UUID on Bitbucket, its identity id on Azure DevOps. Only such users can ask the agent for changes from a
+	 * pull request comment. False when it cannot be determined.
 	 */
 	default Mono<Boolean> canWrite(RunView view, String user) {
 		return Mono.just(false);
 	}
 
 	/**
-	 * The failed jobs of a CI pipeline (GitHub workflow run id, GitLab pipeline id), each with the end of its log.
-	 * Empty when the host is not supported.
+	 * The failed jobs of a CI pipeline (GitHub workflow run id, GitLab pipeline id, Bitbucket
+	 * {@code <commit>/<build status key>}, Azure DevOps build id), each with the end of its log. Empty when the host
+	 * is not supported.
 	 */
 	default Mono<List<FailedJob>> failedJobs(RunView view, String pipelineId) {
 		return Mono.just(List.of());
