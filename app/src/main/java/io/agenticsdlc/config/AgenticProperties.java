@@ -18,7 +18,8 @@ import org.springframework.validation.annotation.Validated;
 @ConfigurationProperties("agentic")
 public record AgenticProperties(@Valid @NotNull Worker worker, @Valid @NotNull Limits limits,
 		@Valid @NotNull Gates gates, @Valid @NotNull Security security, @Valid @NotNull Events events,
-		@Valid @NotNull StubStages stubStages, @Valid @NotNull Sandbox sandbox, @Valid @NotNull Scm scm) {
+		@Valid @NotNull StubStages stubStages, @Valid @NotNull Sandbox sandbox, @Valid @NotNull Scm scm,
+		@Valid @NotNull Models models, @Valid @NotNull Agent agent) {
 
 	/**
 	 * @param enabled run the background worker on this instance (disable for API-only replicas)
@@ -96,5 +97,49 @@ public record AgenticProperties(@Valid @NotNull Worker worker, @Valid @NotNull L
 	public record Scm(@DefaultValue({ "github.com", "gitlab.com", "bitbucket.org", "dev.azure.com" }) List<String> allowedHosts,
 			@DefaultValue({}) java.util.Map<String, String> tokens, @DefaultValue({}) java.util.Map<String, String> mirrors,
 			@DefaultValue("1") @Min(0) int cloneDepth) {
+	}
+
+	/**
+	 * LLM providers and which model serves each role (ADR-0001). Secrets come from the environment only.
+	 *
+	 * @param providers named connections, e.g. {@code anthropic}, {@code openai}, {@code ollama}
+	 * @param roles keyed by role name: {@code triage}, {@code planner}, {@code coder}, {@code reviewer}
+	 * @param pricing USD per million tokens, keyed by model id; models without pricing are tracked at zero cost
+	 */
+	public record Models(@DefaultValue({}) java.util.Map<String, @Valid Provider> providers,
+			@DefaultValue({}) java.util.Map<String, @Valid RoleModel> roles,
+			@DefaultValue({}) java.util.Map<String, @Valid Pricing> pricing) {
+	}
+
+	/**
+	 * @param type {@code anthropic}, {@code openai}, {@code azure-openai}, {@code ollama}, {@code bedrock} or
+	 *        {@code google-genai}
+	 * @param region AWS region for Bedrock
+	 * @param deployment Azure OpenAI deployment name
+	 */
+	public record Provider(@NotBlank String type, @DefaultValue("") String apiKey, @DefaultValue("") String baseUrl,
+			@DefaultValue("") String region, @DefaultValue("") String deployment) {
+	}
+
+	/**
+	 * @param effort provider reasoning effort where supported ({@code low} … {@code max}); empty keeps the default
+	 */
+	public record RoleModel(@NotBlank String provider, @NotBlank String model,
+			@DefaultValue("16000") @Min(256) int maxOutputTokens, @DefaultValue("") String effort) {
+	}
+
+	public record Pricing(@NotNull BigDecimal input, @NotNull BigDecimal output,
+			@DefaultValue("0") BigDecimal cacheRead, @DefaultValue("0") BigDecimal cacheWrite) {
+	}
+
+	/**
+	 * Agent loop limits (ADR-0003).
+	 *
+	 * @param maxTurns model calls per stage
+	 * @param maxToolResultChars tool output shown to the model; the tail is kept
+	 * @param maxRepeats identical consecutive tool calls before the loop counts as stuck
+	 */
+	public record Agent(@DefaultValue("60") @Min(1) int maxTurns, @DefaultValue("12000") @Min(500) int maxToolResultChars,
+			@DefaultValue("3") @Min(2) int maxRepeats) {
 	}
 }

@@ -134,6 +134,16 @@ class WorkspaceStagesTest {
 		}
 
 		@Override
+		public Mono<String> readFile(UUID runId, String relativePath, int maxBytes) {
+			return Mono.error(new java.nio.file.NoSuchFileException(relativePath));
+		}
+
+		@Override
+		public Mono<Void> writeFile(UUID runId, String relativePath, String content) {
+			return Mono.empty();
+		}
+
+		@Override
 		public Mono<Void> destroy(UUID runId) {
 			return Mono.empty();
 		}

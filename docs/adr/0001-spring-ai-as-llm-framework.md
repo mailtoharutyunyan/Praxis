@@ -70,3 +70,14 @@ Use **Spring AI 2.0.1** for model access, tool calling, structured output and MC
 - `Usage` already tracks cache-read and cache-write tokens. Fill them from Spring AI response metadata so cost stays correct with caching.
 - The root POM enables `dependencyConvergence`. Bedrock, Azure and Vertex starters will probably need explicit exclusions; resolve them rather than disabling the rule.
 - Revisit LangChain4j if its agentic module reaches GA *and* we outgrow our own orchestration.
+
+## Implementation notes (M3, verified against the Spring AI 2.0.1 source)
+- **Dependencies:** we depend on the plain provider modules (`spring-ai-anthropic`, `-openai`, `-ollama`, `-bedrock-converse`, `-google-genai`), not the starters. Nothing autoconfigures; `SpringAiAgentModels` builds a `ChatModel` per role from `agentic.models.*`.
+- **Azure OpenAI:** there is no separate module in 2.0. It is the `openai` module with `azure(true)`, a base URL and a deployment name.
+- **Tool execution:** 2.0 removed the internal tool loop from every `ChatModel`, so `ChatModel.call` only returns tool calls and never executes them. Tools are passed as definition-only callbacks; `AgentLoop` executes them.
+- **Prompt options:** options on a `Prompt` *replace* the model's defaults, so per-call options start from `getOptions().mutate()`. Without that, Anthropic silently falls back to its default model.
+- **Thinking blocks:** Anthropic returns thinking in extra generations and keeps signed thinking blocks only on its own `AssistantMessage` subtype. The adapter reads the generation that carries tool calls (else the last one) and replays the provider's message object unchanged (`AgentMessage.Assistant.nativeMessage`).
+- **Usage:** cache read and write tokens are exposed generically (`getCacheReadInputTokens` / `getCacheWriteInputTokens`), so cost is priced per token type.
+- **Defaults:** every role uses `claude-opus-5-5` at its role's effort, with the `CONVERSATION_HISTORY` cache strategy.
+- **Dependency convergence:** pins are listed in the root POM. Pinning `victools` 5.x is safe because `anthropic-java` uses its 4.x copy only for class-derived structured-output schemas, which we don't use.
+

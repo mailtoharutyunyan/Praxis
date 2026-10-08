@@ -127,6 +127,36 @@ class DockerSandboxTest {
 	}
 
 	@Test
+	void readsAndWritesFilesAsTheContainerUser() throws Exception {
+		assertThat(sandbox.readFile(runId, "hello.txt", 1_000).block()).isEqualTo("hello\n");
+
+		String content = "line 1\nüñíçødé ✓\n" + "x".repeat(100_000) + "\n";
+		sandbox.writeFile(runId, "src/deep/New.java", content).block();
+		assertThat(Files.readString(paths.repo(runId).resolve("src/deep/New.java"))).isEqualTo(content);
+		assertThat(sandbox.readFile(runId, "src/deep/New.java", 200_000).block()).isEqualTo(content);
+		assertThat(run("stat -c %u src/deep/New.java", Duration.ofSeconds(30)).output().trim())
+				.isEqualTo(run("id -u", Duration.ofSeconds(30)).output().trim());
+
+		org.assertj.core.api.Assertions.assertThatThrownBy(() -> sandbox.readFile(runId, "missing.txt", 1_000).block())
+				.hasCauseInstanceOf(java.nio.file.NoSuchFileException.class);
+		org.assertj.core.api.Assertions.assertThatThrownBy(() -> sandbox.readFile(runId, "src", 1_000).block())
+				.isInstanceOf(IllegalArgumentException.class).hasMessageContaining("not a regular file");
+		org.assertj.core.api.Assertions.assertThatThrownBy(() -> sandbox.readFile(runId, "src/deep/New.java", 10).block())
+				.isInstanceOf(IllegalArgumentException.class).hasMessageContaining("larger than");
+		org.assertj.core.api.Assertions.assertThatThrownBy(() -> sandbox.writeFile(runId, "src", "x").block())
+				.isInstanceOf(IllegalArgumentException.class).hasMessageContaining("is a directory");
+	}
+
+	@Test
+	void symlinksResolveInsideTheContainerNotOnTheHost() throws Exception {
+		Path hostSecret = tmp.resolve("host-secret.txt");
+		Files.writeString(hostSecret, "host only\n");
+		run("ln -s " + hostSecret + " leak.txt", Duration.ofSeconds(30));
+		org.assertj.core.api.Assertions.assertThatThrownBy(() -> sandbox.readFile(runId, "leak.txt", 1_000).block())
+				.hasCauseInstanceOf(java.nio.file.NoSuchFileException.class);
+	}
+
+	@Test
 	void boundedOutputKeepsShortOutputIntact() {
 		BoundedOutput out = new BoundedOutput(100);
 		out.append("abc");

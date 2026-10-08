@@ -2,7 +2,7 @@
 
 Turns a task (a prompt, a Jira ticket, or another source) into a reviewed pull request. An agent plans the work, implements it in an isolated Docker sandbox, runs the build and tests, and reviews its own changes. Humans approve at gates whose number scales with the task's risk. A human always approves the push, and merging is never automated.
 
-> Status: **M2 (Docker sandbox, checkout, build/test detection)**. See [the roadmap](#roadmap).
+> Status: **M3 (model layer and agent loop)**. See [the roadmap](#roadmap).
 
 ## Stack
 - Java 25 (LTS), Spring Boot 4.1.1, Spring WebFlux, Project Reactor
@@ -98,6 +98,32 @@ Sandbox settings (`agentic.sandbox.*`): `network` (default `bridge`, or `none` f
 
 > Before running untrusted (ticket-sourced) tasks in production, restrict sandbox egress to package registries with a proxy or network policy; see ADR-0003.
 
+## Models and the agent loop
+Each role (`triage`, `planner`, `coder`, `reviewer`) is served by a configurable provider and model (`agentic.models.*`). Supported provider types: `anthropic`, `openai`, `azure-openai`, `ollama`, `bedrock`, `google-genai`. Every role defaults to **Claude Opus 5.5** (`claude-opus-5-5`), reading the key from `ANTHROPIC_API_KEY`. The app starts without any key; a run escalates to a human if a model it needs is not configured.
+```yaml
+agentic:
+  models:
+    providers:
+      local: { type: ollama, base-url: http://localhost:11434 }
+    roles:
+      triage: { provider: local, model: qwen3:8b, max-output-tokens: 2000 }
+```
+The agent loop (`AgentLoop`) is provider-neutral.
+
+Tools the agent can use:
+- **Coder:** `list_files`, `view_file`, `search`, `edit_file` (exact, unique-match replace), `create_file`, `run_command`, `show_diff`.
+- **Reviewer:** read-only tools only.
+
+Every tool runs inside the sandbox, and none can push, comment or message. Every turn and tool call is a run event.
+
+Limits:
+- turns per stage (`agentic.agent.max-turns`);
+- the run's token and cost budget, priced from `agentic.models.pricing`;
+- stuck detection (the same call repeated);
+- old tool outputs cleared from context.
+
+`LiveAnthropicSmokeTest` exercises a real tool-call round trip when `ANTHROPIC_API_KEY` is set.
+
 ## API (v1)
 All endpoints need a bearer JWT from your OIDC provider (`spring.security.oauth2.resourceserver.jwt.issuer-uri`). Roles are read from the `roles` claim, configurable with `agentic.security.roles-claim` (Keycloak: `realm_access.roles`). Errors are RFC 9457 problem details.
 
@@ -121,7 +147,7 @@ Operations: `/actuator/health/{liveness,readiness}` and `/actuator/prometheus`, 
 | **M0** ✅ | Multi-module skeleton, schema, CI, ADRs, ArchUnit, coverage gate |
 | **M1** ✅ | Task intake API, run engine and leased worker, SSE event stream, approvals, OAuth2 roles |
 | **M2** ✅ | Docker sandbox, JGit clone, build/test detection |
-| M3 | Spring AI model registry (per-role provider/model), tool loop with budgets |
+| **M3** ✅ | Spring AI model registry (per-role provider/model), tool loop with budgets |
 | M4 | Triage → context → spec → implement ⇄ verify → review, all gates |
 | M5 | SCM providers: GitHub, GitLab, Bitbucket, Azure DevOps (branch push + PR) |
 | M6 | Jira intake (webhook + REST) and status comments |

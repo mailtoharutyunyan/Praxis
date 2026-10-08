@@ -64,5 +64,30 @@ agentic:
   scm:
     allowed-hosts: [github.com, gitlab.com, bitbucket.org, dev.azure.com]
     clone-depth: 1
+  agent:
+    max-turns: 60
+    max-tool-result-chars: 12000
+  models:
+    providers:
+      anthropic:
+        type: anthropic
+        api-key: ${ANTHROPIC_API_KEY:}
+      openai:
+        type: openai
+        api-key: ${OPENAI_API_KEY:}
+      ollama:
+        type: ollama
+        base-url: ${OLLAMA_BASE_URL:http://localhost:11434}
+    # Defaults: Claude Opus 5.5 for every role. Point any role at another provider/model, e.g. a local Ollama model.
+    roles:
+      triage:   { provider: anthropic, model: claude-opus-5-5, max-output-tokens: 4000, effort: low }
+      planner:  { provider: anthropic, model: claude-opus-5-5, max-output-tokens: 16000, effort: high }
+      coder:    { provider: anthropic, model: claude-opus-5-5, max-output-tokens: 16000, effort: high }
+      reviewer: { provider: anthropic, model: claude-opus-5-5, max-output-tokens: 16000, effort: high }
+    # USD per million tokens (first-party list prices, 2026-10); cache write = 5-minute TTL (1.25x input).
+    pricing:
+      claude-opus-5-5:   { input: 4.00, output: 20.00, cache-read: 0.20, cache-write: 5.00 }
+      claude-sonnet-5-5: { input: 2.00, output: 10.00, cache-read: 0.20, cache-write: 2.50 }
+      claude-haiku-5-5:  { input: 0.10, output: 0.50, cache-read: 0.01, cache-write: 0.125 }
     # tokens:
     #   "[github.com]": ${GITHUB_TOKEN}

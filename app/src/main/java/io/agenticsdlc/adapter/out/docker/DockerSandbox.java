@@ -17,6 +17,7 @@ import io.agenticsdlc.core.workspace.SandboxSpec;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -66,6 +67,50 @@ public class DockerSandbox implements Sandbox {
 	@Override
 	public Mono<CommandResult> exec(UUID runId, String command, Duration timeout) {
 		return Mono.fromCallable(() -> execBlocking(runId, command, timeout)).subscribeOn(Schedulers.boundedElastic());
+	}
+
+	@Override
+	public Mono<String> readFile(UUID runId, String relativePath, int maxBytes) {
+		return Mono.fromCallable(() -> {
+			Raw raw = execRaw(runId, READ_SCRIPT, List.of("AGENTIC_PATH=" + relativePath, "AGENTIC_MAX=" + maxBytes),
+					maxBytes);
+			return switch (raw.exitCode()) {
+				case 0 -> new String(raw.stdout(), StandardCharsets.UTF_8);
+				case 3 -> throw new NoSuchFileException(relativePath);
+				case 4 -> throw new IllegalArgumentException(relativePath + " is not a regular file");
+				case 5 -> throw new IllegalArgumentException(relativePath + " is larger than " + maxBytes
+						+ " bytes; view a range or search instead");
+				default -> throw new IllegalStateException("reading " + relativePath + " failed: " + raw.stderr());
+			};
+		}).subscribeOn(Schedulers.boundedElastic());
+	}
+
+	@Override
+	public Mono<Void> writeFile(UUID runId, String relativePath, String content) {
+		return Mono.<Void>fromCallable(() -> {
+			// Content travels base64-encoded in environment variables, in chunks well under the kernel's per-string
+			// argument limit; each chunk is appended by the container user, so ownership and symlinks stay inside.
+			byte[] bytes = content.getBytes(StandardCharsets.UTF_8);
+			int offset = 0;
+			boolean first = true;
+			do {
+				int length = Math.min(WRITE_CHUNK_BYTES, bytes.length - offset);
+				String chunk = java.util.Base64.getEncoder().encodeToString(java.util.Arrays.copyOfRange(bytes, offset,
+						offset + length));
+				Raw raw = execRaw(runId, first ? WRITE_FIRST_SCRIPT : APPEND_SCRIPT,
+						List.of("AGENTIC_PATH=" + relativePath, "AGENTIC_DATA=" + chunk), 0);
+				if (raw.exitCode() == 4) {
+					throw new IllegalArgumentException(relativePath + " is a directory");
+				}
+				if (raw.exitCode() != 0) {
+					throw new IllegalStateException("writing " + relativePath + " failed: " + raw.stderr());
+				}
+				offset += length;
+				first = false;
+			}
+			while (offset < bytes.length);
+			return null;
+		}).subscribeOn(Schedulers.boundedElastic());
 	}
 
 	@Override
@@ -151,11 +196,71 @@ public class DockerSandbox implements Sandbox {
 			throw new java.io.UncheckedIOException(e);
 		}
 		Duration took = Duration.ofNanos(System.nanoTime() - started);
-		Long exit = finished ? docker.inspectExecCmd(execId).exec().getExitCodeLong() : null;
-		int exitCode = exit == null ? -1 : exit.intValue();
+		int exitCode = finished ? exitCode(execId) : -1;
 		// 137 = SIGKILL from `timeout -s KILL`; only call it a timeout if the deadline really passed.
 		boolean timedOut = !finished || (exitCode == 137 && took.compareTo(timeout) >= 0);
 		return new CommandResult(command, exitCode, output.toString(), output.truncated(), timedOut, took);
+	}
+
+	/** Exit 3: missing, 4: not a regular file, 5: too large. Runs as the container user, inside /workspace. */
+	private static final String READ_SCRIPT = "[ -e \"$AGENTIC_PATH\" ] || exit 3; [ -f \"$AGENTIC_PATH\" ] || exit 4; "
+			+ "[ \"$(wc -c < \"$AGENTIC_PATH\")\" -le \"$AGENTIC_MAX\" ] || exit 5; exec cat -- \"$AGENTIC_PATH\"";
+	static final int WRITE_CHUNK_BYTES = 48 * 1024;
+	/** Creates parents and truncates; exit 4: the path is a directory. */
+	private static final String WRITE_FIRST_SCRIPT = "[ -d \"$AGENTIC_PATH\" ] && exit 4; "
+			+ "mkdir -p -- \"$(dirname -- \"$AGENTIC_PATH\")\" && printf '%s' \"$AGENTIC_DATA\" | base64 -d > \"$AGENTIC_PATH\"";
+	private static final String APPEND_SCRIPT = "printf '%s' \"$AGENTIC_DATA\" | base64 -d >> \"$AGENTIC_PATH\"";
+
+	private record Raw(int exitCode, byte[] stdout, String stderr) {
+	}
+
+	/** Exec with separate stdout (bytes, capped) and stderr. Used for file transfer. */
+	private Raw execRaw(UUID runId, String script, List<String> env, int maxStdout)
+			throws InterruptedException {
+		String execId = docker.execCreateCmd(containerName(runId))
+				.withCmd("sh", "-c", script)
+				.withEnv(env)
+				.withWorkingDir(Sandbox.WORKDIR)
+				.withAttachStdout(true)
+				.withAttachStderr(true)
+				.exec()
+				.getId();
+		java.io.ByteArrayOutputStream stdout = new java.io.ByteArrayOutputStream();
+		StringBuilder stderr = new StringBuilder();
+		try (ResultCallback.Adapter<Frame> callback = docker.execStartCmd(execId).exec(new ResultCallback.Adapter<>() {
+			@Override
+			public void onNext(Frame frame) {
+				if (frame.getStreamType() == com.github.dockerjava.api.model.StreamType.STDERR) {
+					stderr.append(new String(frame.getPayload(), StandardCharsets.UTF_8));
+				}
+				else if (maxStdout <= 0 || stdout.size() <= maxStdout) {
+					stdout.writeBytes(frame.getPayload());
+				}
+			}
+		})) {
+			if (!callback.awaitCompletion(120, TimeUnit.SECONDS)) {
+				throw new IllegalStateException("file transfer timed out");
+			}
+		}
+		catch (IOException e) {
+			throw new java.io.UncheckedIOException(e);
+		}
+		return new Raw(exitCode(execId), stdout.toByteArray(), stderr.toString().strip());
+	}
+
+	/**
+	 * The output stream can close a moment before Docker records the exit code, so wait briefly until the exec is
+	 * reported as finished. -1 if it never is.
+	 */
+	private int exitCode(String execId) throws InterruptedException {
+		for (int attempt = 0; attempt < 50; attempt++) {
+			var inspect = docker.inspectExecCmd(execId).exec();
+			if (!Boolean.TRUE.equals(inspect.isRunning()) && inspect.getExitCodeLong() != null) {
+				return inspect.getExitCodeLong().intValue();
+			}
+			Thread.sleep(20);
+		}
+		return -1;
 	}
 
 	private void pullIfMissing(String image) {

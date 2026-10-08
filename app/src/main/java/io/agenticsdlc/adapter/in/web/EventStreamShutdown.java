@@ -1,6 +1,6 @@
 package io.agenticsdlc.adapter.in.web;
 
-import org.springframework.boot.web.server.context.WebServerGracefulShutdownLifecycle;
+import org.springframework.boot.web.server.context.WebServerApplicationContext;
 import org.springframework.context.SmartLifecycle;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Mono;
@@ -41,6 +41,6 @@ class EventStreamShutdown implements SmartLifecycle {
 	/** Higher phase stops earlier: just before graceful shutdown starts waiting for active requests. */
 	@Override
 	public int getPhase() {
-		return WebServerGracefulShutdownLifecycle.SMART_LIFECYCLE_PHASE + 1;
+		return WebServerApplicationContext.GRACEFUL_SHUTDOWN_PHASE + 1;
 	}
 }
