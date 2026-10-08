@@ -44,6 +44,8 @@ jobs:
       # Unit tests, Testcontainers integration tests (Docker is available on ubuntu runners),
       # ArchUnit layering rules and the JaCoCo coverage gate.
       - run: ./mvnw --batch-mode --no-transfer-progress verify
+      - name: Production image builds
+        run: docker build --tag agentic-sdlc:ci .
       - if: always()
         uses: actions/upload-artifact@v7
         with:

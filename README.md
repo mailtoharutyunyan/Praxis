@@ -78,10 +78,13 @@ Each run gets a working copy on the host and one Docker container:
 
 Container hardening:
 - all capabilities dropped and `no-new-privileges`;
-- runs as a non-root user;
+- runs as a non-root user (the app refuses to start a sandbox as root);
 - memory, CPU and process limits;
+- no network by default, never the host's network;
 - no credentials in the environment;
 - every command is killed by `timeout` when it runs too long.
+
+The coder cannot change how its work is checked. `.agentic-sdlc.yml`, `AGENTS.md`/`CLAUDE.md` and the build-file detection are read from the base commit, not from the working tree. Publishing pushes only the diff that was approved at the PUBLISH gate, checked by SHA-256.
 
 The toolchain is detected from root files: Maven, Gradle, npm/pnpm/yarn, Go, Python and .NET. A repository can override it, or declare a custom one, in `.agentic-sdlc.yml`:
 ```yaml
@@ -96,9 +99,39 @@ SCM settings (`agentic.scm.*`):
 - `mirrors`: URL rewrites, like git's `insteadOf`.
 - `clone-depth`: default 1.
 
-Sandbox settings (`agentic.sandbox.*`): `network` (default `bridge`, or `none` for full isolation), `memory`, `cpus`, `command-timeout`.
+Sandbox settings (`agentic.sandbox.*`): `network`, `egress-proxy`, `no-proxy`, `user`, `memory`, `cpus`, `command-timeout`.
 
-> Before running untrusted (ticket-sourced) tasks in production, restrict sandbox egress to package registries with a proxy or network policy; see ADR-0003.
+**Egress.** `network: none` (the default) blocks all network access, so builds must not download anything. To allow dependency downloads without opening the network, use the allowlisting proxy in `dev/egress`. It is a Squid proxy on an internal Docker network whose only way out is that proxy.
+```bash
+docker compose -p agentic-egress -f dev/egress/compose.yaml up -d
+```
+```yaml
+agentic.sandbox:
+  network: agentic-sandbox
+  egress-proxy: http://egress:3128   # exported as HTTP(S)_PROXY, JVM proxy properties and Maven settings
+```
+Package registries (Maven Central, Gradle, npm, PyPI, Go, NuGet) are reachable through the proxy. Cloud metadata, internal hosts and everything else are refused. Edit `dev/egress/allowed-domains.txt` to change the list. The `local` profile uses `bridge` for convenience; never use it for ticket-sourced tasks.
+
+## Deployment
+The `Dockerfile` builds one image with the API and the web UI. It runs as uid 10001 with the `prod` profile.
+```bash
+docker build -t agentic-sdlc .
+```
+What the container needs:
+- **Postgres:** `SPRING_R2DBC_URL` (plus username and password) and `SPRING_FLYWAY_URL` (plus user and password).
+- **An OIDC issuer and an audience:**
+  - `SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_ISSUER_URI`.
+  - `AGENTIC_JWT_AUDIENCE`, default `agentic-sdlc`. Access tokens must carry this value in `aud`; in Keycloak, add an audience mapper.
+- **Docker access for sandboxes:** `DOCKER_HOST`, or the Docker socket mounted with `--group-add <docker gid>`.
+  - Access to the Docker API is root on that host. Use a dedicated sandbox host, or rootless Docker.
+  - Containers are bind-mounted from the Docker host, so mount the workspace volume at the same path on the host and in the container. The default path is `/var/lib/agentic/workspaces`, and it must be owned by uid 10001.
+- **Model and SCM credentials** as environment variables, such as `ANTHROPIC_API_KEY` and `agentic.scm.tokens`.
+
+Several instances can share one database:
+- Each run's working copy stays on the node that holds it (`agentic.worker.node-id`, default: the host name). Keep the node id stable across restarts, for example with a StatefulSet.
+- If a node stops sending heartbeats for `node-timeout` (90 s), its runs move to other nodes. Their working copies are then lost: publishing refuses a diff that no longer matches the approved one, and the run goes to a human.
+- Jira comments and pull request polling hold a cluster-wide lease, so only one instance runs each.
+- On shutdown, a worker stops claiming runs and gives in-flight steps `drain-timeout` (20 s) to finish. Steps still running after that release their lease, so another instance picks them up immediately.
 
 ## Models and the agent loop
 Each role (`triage`, `planner`, `coder`, `reviewer`) is served by a configurable provider and model (`agentic.models.*`). Supported provider types: `anthropic`, `openai`, `azure-openai`, `ollama`, `bedrock`, `google-genai`. Every role defaults to **Claude Opus 5.5** (`claude-opus-5-5`), reading the key from `ANTHROPIC_API_KEY`. The app starts without any key; a run escalates to a human if a model it needs is not configured.

@@ -1,0 +1,12 @@
+# Keep the build context small and free of local state and secrets.
+**/target/
+**/node_modules/
+ui/dist/
+.git/
+.dev/
+.idea/
+.vscode/
+.agentic-progress/
+**/*.iml
+**/.env
+**/.env.*
