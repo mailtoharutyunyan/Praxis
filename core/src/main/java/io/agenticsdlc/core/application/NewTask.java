@@ -9,9 +9,11 @@ import io.agenticsdlc.core.domain.TaskOrigin;
  *
  * @param requestedBy authenticated subject (prompt API) or the source's user reference (Jira, issues)
  * @param idempotencyKey optional client key that makes retries of the same submission safe
+ * @param reviewPlan stop at the SPEC gate even when triage rates the task low risk
  */
 public record NewTask(TaskOrigin origin, String externalRef, String title, String description, RepositoryRef repository,
-		String baseBranch, String requestedBy, String idempotencyKey, java.util.List<io.agenticsdlc.core.domain.Companion> companions) {
+		String baseBranch, String requestedBy, String idempotencyKey, java.util.List<io.agenticsdlc.core.domain.Companion> companions,
+		boolean reviewPlan) {
 
 	public NewTask {
 		companions = companions == null ? java.util.List.of() : java.util.List.copyOf(companions);
@@ -21,5 +23,12 @@ public record NewTask(TaskOrigin origin, String externalRef, String title, Strin
 			String baseBranch, String requestedBy, String idempotencyKey) {
 		this(origin, externalRef, title, description, repository, baseBranch, requestedBy, idempotencyKey,
 				java.util.List.of());
+	}
+
+	public NewTask(TaskOrigin origin, String externalRef, String title, String description, RepositoryRef repository,
+			String baseBranch, String requestedBy, String idempotencyKey,
+			java.util.List<io.agenticsdlc.core.domain.Companion> companions) {
+		this(origin, externalRef, title, description, repository, baseBranch, requestedBy, idempotencyKey, companions,
+				false);
 	}
 }

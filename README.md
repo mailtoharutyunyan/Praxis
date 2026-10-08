@@ -54,7 +54,7 @@ RECEIVED → TRIAGING → PREPARING_CONTEXT → SPECIFYING ─┬─► [SPEC ga
 | MEDIUM | SPEC, PUBLISH |
 | HIGH (architectural / cross-cutting) | SPEC, IMPLEMENTATION, PUBLISH |
 
-Task text from an untrusted source, such as a Jira ticket or an issue, always adds the SPEC gate. Any live run can move to `NEEDS_HUMAN`, `FAILED` or `CANCELLED`.
+Task text from an untrusted source, such as a Jira ticket or an issue, always adds the SPEC gate. So does a task submitted with "Review the plan before coding" (checked by default in the New task dialog; `reviewPlan: true` in the API or the MCP `submit_task` tool), even when triage rates it LOW. These rules only ever add gates; they never remove one. Any live run can move to `NEEDS_HUMAN`, `FAILED` or `CANCELLED`.
 
 ## Prerequisites
 - JDK 25. If it isn't your default JDK: `export JAVA_HOME=$(/usr/libexec/java_home -v 25)`

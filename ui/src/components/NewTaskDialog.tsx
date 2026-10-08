@@ -30,6 +30,7 @@ export function NewTaskDialog({ api, onCreated }: { api: Api; onCreated: (run: R
         baseBranch: String(data.get("baseBranch") || "") || undefined,
         companions: String(data.get("companions") || "").split(/\s+/).filter((url) => url.startsWith("https://"))
           .map((cloneUrl) => ({ cloneUrl })),
+        reviewPlan: data.get("reviewPlan") === "on",
       }, idempotencyKey);
       dialog.current?.close();
       form.reset();
@@ -72,6 +73,7 @@ export function NewTaskDialog({ api, onCreated }: { api: Api; onCreated: (run: R
           <label>Also change these repositories (optional, one clone URL per line)
             <textarea name="companions" rows={2} placeholder="e.g. the API's consumers; each gets its own pull request" />
           </label>
+          <label><input type="checkbox" name="reviewPlan" defaultChecked /> Review the plan before coding</label>
           {error && <div className="alert error" role="alert">{error}</div>}
           <div className="row">
             <span className="spacer" />

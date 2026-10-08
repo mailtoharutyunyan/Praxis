@@ -22,7 +22,7 @@ const runOf = (id: string, title: string, state: Run["state"] = "IMPLEMENTING", 
   progress: { percent: 40, phase: "Implementing", step: 4, steps: 9, activity: "", waiting: false, finished: false },
   task: { id: "t", origin: "PROMPT", externalRef: null, title, description: "", scmKind: "GITHUB",
     cloneUrl: "https://github.com/acme/shop.git", baseBranch: null, trust: "TRUSTED", requestedBy: "alice",
-    createdAt: "2026-10-08T10:00:00Z" },
+    createdAt: "2026-10-08T10:00:00Z", reviewPlan: false },
 });
 
 const A = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
@@ -44,6 +44,21 @@ describe("RunPage", () => {
     await act(async () => slowA.resolve(runOf(A, "Run A")));
     expect(screen.queryByText("Run A")).toBeNull();
     expect(screen.getByText("Run B")).toBeInTheDocument();
+  });
+
+  it("shows in the details when plan review was requested", async () => {
+    const base = runOf(A, "Reviewed run");
+    const reviewed = { ...base, task: { ...base.task, reviewPlan: true } };
+    const api = { getRun: vi.fn().mockResolvedValue(reviewed), eventStreamUrl: () => "/events" } as unknown as Api;
+    render(<RunPage api={api} id={A} token={token} roles={[]} />);
+    expect(await screen.findByText("Plan review requested")).toBeInTheDocument();
+  });
+
+  it("does not mention plan review when it was not requested", async () => {
+    const api = { getRun: vi.fn().mockResolvedValue(runOf(A, "Plain run")), eventStreamUrl: () => "/events" } as unknown as Api;
+    render(<RunPage api={api} id={A} token={token} roles={[]} />);
+    expect(await screen.findByText("Plain run")).toBeInTheDocument();
+    expect(screen.queryByText("Plan review requested")).toBeNull();
   });
 
   it("keeps the newest state when overlapping refreshes resolve out of order", async () => {

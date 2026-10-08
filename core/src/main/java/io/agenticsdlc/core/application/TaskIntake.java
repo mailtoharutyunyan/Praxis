@@ -51,7 +51,7 @@ public final class TaskIntake {
 		Instant now = clock.instant();
 		Task task = new Task(ids.get(), request.origin(), request.externalRef(), request.title(), request.description(),
 				request.repository(), request.baseBranch(), trustOf(request.origin()), request.requestedBy(),
-				request.idempotencyKey(), now, request.companions());
+				request.idempotencyKey(), now, request.companions(), request.reviewPlan());
 		Run run = Run.start(ids.get(), task.id(), now);
 		Map<String, Object> payload = new LinkedHashMap<>();
 		payload.put("taskId", task.id().toString());
@@ -63,6 +63,9 @@ public final class TaskIntake {
 			payload.put("companions", task.companions().stream().map(c -> c.repository().cloneUrl().toString()).toList());
 		}
 		payload.put("trust", task.trust().name());
+		if (task.reviewPlan()) {
+			payload.put("reviewPlan", true);
+		}
 		RunEvent created = RunEvent.of(run.id(), RunEventType.RUN_CREATED, task.requestedBy(), payload, now);
 		return new Prepared(task, run, List.of(created));
 	}

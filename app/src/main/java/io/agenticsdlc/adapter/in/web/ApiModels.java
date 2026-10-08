@@ -32,7 +32,13 @@ final class ApiModels {
 			@NotBlank @Size(max = Task.MAX_DESCRIPTION_LENGTH) String description,
 			@NotNull @Valid RepositoryRequest repository,
 			@Size(max = 255) String baseBranch,
-			@Valid @Size(max = Task.MAX_COMPANIONS) List<CompanionRequest> companions) {
+			@Valid @Size(max = Task.MAX_COMPANIONS) List<CompanionRequest> companions,
+			Boolean reviewPlan) {
+
+		/** Stop at the SPEC gate even for low-risk tasks; absent or null means no. */
+		boolean reviewPlanRequested() {
+			return Boolean.TRUE.equals(reviewPlan);
+		}
 
 		/** Companion repositories as domain values; aliases default to the repository name. */
 		List<Companion> companionList() {
@@ -99,7 +105,8 @@ final class ApiModels {
 							task.description(), task.repository().kind().name(), task.repository().cloneUrl(),
 							task.baseBranch(), task.trust().name(), task.requestedBy(), task.createdAt(),
 							task.companions().stream().map(c -> new CompanionResponse(c.alias(), c.repository().kind().name(),
-									c.repository().cloneUrl(), c.baseBranch())).toList()),
+									c.repository().cloneUrl(), c.baseBranch())).toList(),
+							task.reviewPlan()),
 					ProgressResponse.of(progress));
 		}
 	}
@@ -110,7 +117,7 @@ final class ApiModels {
 
 	record TaskResponse(UUID id, String origin, String externalRef, String title, String description,
 			String scmKind, URI cloneUrl, String baseBranch, String trust, String requestedBy, Instant createdAt,
-			List<CompanionResponse> companions) {
+			List<CompanionResponse> companions, boolean reviewPlan) {
 	}
 
 	/** Pass both {@code next*} values back as {@code createdBefore} and {@code beforeId} for the next page. */

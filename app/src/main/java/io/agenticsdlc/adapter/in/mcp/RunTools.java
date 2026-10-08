@@ -95,7 +95,9 @@ class RunTools {
 					required = false) String idempotencyKey,
 			@McpToolParam(description = "Clone URLs of other repositories to change in the same run (e.g. consumers "
 					+ "of an API); same code host kind. Each gets its own pull request.", required = false)
-			List<String> companionRepositories) {
+			List<String> companionRepositories,
+			@McpToolParam(description = "Stop for a human to review the specification even when triage rates the task "
+					+ "low risk; default false.", required = false) Boolean reviewPlan) {
 		ScmKind kind = scmKind(repositoryKind);
 		List<Companion> companions = companionRepositories == null ? List.of() : companionRepositories.stream()
 				.filter(url -> url != null && !url.isBlank())
@@ -104,7 +106,8 @@ class RunTools {
 		return caller(OPERATE).flatMap(user -> {
 			NewTask task = new NewTask(TaskOrigin.MCP, null, required("title", title), required("description", description),
 					new RepositoryRef(kind, URI.create(required("cloneUrl", cloneUrl))),
-					blankToNull(baseBranch), user.getName(), blankToNull(idempotencyKey), companions);
+					blankToNull(baseBranch), user.getName(), blankToNull(idempotencyKey), companions,
+					Boolean.TRUE.equals(reviewPlan));
 			return intake.submit(task).map(submission -> summary(submission.view()));
 		});
 	}

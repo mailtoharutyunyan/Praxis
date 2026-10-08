@@ -41,7 +41,8 @@ class TaskController {
 			@AuthenticationPrincipal Jwt user) {
 		NewTask task = new NewTask(TaskOrigin.PROMPT, null, request.title(), request.description(),
 				new RepositoryRef(request.repository().kind(), request.repository().cloneUrl()), request.baseBranch(),
-				user.getSubject(), idempotencyKey, request.companionList());
+				user.getSubject(), idempotencyKey, request.companionList(),
+				request.reviewPlanRequested());
 		return intake.submit(task).map(submission -> ResponseEntity
 				.status(submission.created() ? HttpStatus.CREATED : HttpStatus.OK)
 				.location(URI.create("/api/v1/runs/" + submission.view().run().id()))

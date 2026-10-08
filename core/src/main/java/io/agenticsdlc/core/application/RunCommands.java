@@ -149,7 +149,7 @@ public final class RunCommands {
 		Objects.requireNonNull(risk, "risk");
 		return change(runId, (view, now) -> {
 			Run current = view.run();
-			Run next = current.raiseRisk(risk, GatePolicy.forRisk(risk, view.task().trust()), now);
+			Run next = current.raiseRisk(risk, GatePolicy.forRisk(risk, view.task().trust(), view.task().reviewPlan()), now);
 			Map<String, Object> payload = new LinkedHashMap<>();
 			payload.put("from", current.risk() == null ? null : current.risk().name());
 			payload.put("to", risk.name());

@@ -81,6 +81,40 @@ class TransitionsTest {
 	}
 
 	@Test
+	void planReviewStopsLowRiskTaskAtSpecGate() {
+		Task reviewed = new Task(UUID.randomUUID(), TaskOrigin.PROMPT, null, "t", "d", REPO, null, Trust.TRUSTED,
+				"alice", null, T0, java.util.List.of(), true);
+		Run triaging = Run.start(UUID.randomUUID(), reviewed.id(), T0).transitionTo(RunState.TRIAGING, T0);
+		Transitions.Step step = Transitions.apply(triaging, reviewed,
+				new StageOutcome.Triaged(RiskLevel.LOW, "small change", Usage.ZERO), LIMITS, T0);
+
+		assertThat(step.next().risk()).isEqualTo(RiskLevel.LOW);
+		assertThat(step.next().gatePolicy().gates()).containsExactly(Gate.SPEC, Gate.PUBLISH);
+
+		Run specifying = step.next().transitionTo(RunState.SPECIFYING, T0);
+		Transitions.Step specified = Transitions.apply(specifying, reviewed, DONE, LIMITS, T0);
+		assertThat(specified.next().state()).isEqualTo(RunState.AWAITING_APPROVAL);
+		assertThat(specified.next().pendingGate()).isEqualTo(Gate.SPEC);
+	}
+
+	@Test
+	void planReviewKeepsHighRiskGates() {
+		Task reviewed = new Task(UUID.randomUUID(), TaskOrigin.PROMPT, null, "t", "d", REPO, null, Trust.TRUSTED,
+				"alice", null, T0, java.util.List.of(), true);
+		Run triaging = Run.start(UUID.randomUUID(), reviewed.id(), T0).transitionTo(RunState.TRIAGING, T0);
+		Transitions.Step step = Transitions.apply(triaging, reviewed,
+				new StageOutcome.Triaged(RiskLevel.HIGH, "auth", Usage.ZERO), LIMITS, T0);
+		assertThat(step.next().gatePolicy().gates()).containsExactly(Gate.SPEC, Gate.IMPLEMENTATION, Gate.PUBLISH);
+	}
+
+	@Test
+	void withoutPlanReviewLowRiskTrustedTaskOnlyHasPublishGate() {
+		Run triaging = Run.start(UUID.randomUUID(), trusted.id(), T0).transitionTo(RunState.TRIAGING, T0);
+		Transitions.Step step = apply(triaging, new StageOutcome.Triaged(RiskLevel.LOW, "typo", Usage.ZERO));
+		assertThat(step.next().gatePolicy().gates()).containsExactly(Gate.PUBLISH);
+	}
+
+	@Test
 	void triageWithoutRiskFails() {
 		Run triaging = Run.start(UUID.randomUUID(), trusted.id(), T0).transitionTo(RunState.TRIAGING, T0);
 		assertThat(apply(triaging, DONE).next().state()).isEqualTo(RunState.FAILED);

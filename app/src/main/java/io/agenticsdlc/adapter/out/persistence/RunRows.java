@@ -34,7 +34,8 @@ final class RunRows {
 			t.id as t_id, t.origin as t_origin, t.external_ref as t_external_ref, t.title as t_title,
 			t.description as t_description, t.scm_kind as t_scm_kind, t.clone_url as t_clone_url,
 			t.base_branch as t_base_branch, t.trust as t_trust, t.requested_by as t_requested_by,
-			t.idempotency_key as t_idempotency_key, t.created_at as t_created_at, t.companions::text as t_companions""";
+			t.idempotency_key as t_idempotency_key, t.created_at as t_created_at, t.companions::text as t_companions,
+			t.review_plan as t_review_plan""";
 	private static final tools.jackson.databind.json.JsonMapper JSON = tools.jackson.databind.json.JsonMapper.builder().build();
 
 	private RunRows() {
@@ -74,7 +75,8 @@ final class RunRows {
 				row.get("t_requested_by", String.class),
 				row.get("t_idempotency_key", String.class),
 				instant(row.get("t_created_at", OffsetDateTime.class)),
-				companions(row.get("t_companions", String.class)));
+				companions(row.get("t_companions", String.class)),
+				Boolean.TRUE.equals(row.get("t_review_plan", Boolean.class)));
 	}
 
 	static List<Companion> companions(String json) {
