@@ -10,6 +10,10 @@
 #   AGENTIC_PORT          host port of the UI and API (default 8080)
 #   POSTGRES_PASSWORD     database password (set it before the first start)
 #   AGENTIC_SECRETS_KEY   base64 of 32 random bytes (`openssl rand -base64 32`); back it up with the database
+#   AGENTIC_SANDBOX_RUNTIME  container runtime for sandboxes, e.g. runsc (gVisor) once installed on the Docker host
+#   BACKUP_KEEP_DAYS      how many days of nightly database dumps to keep (default 14)
+#
+# The first-run setup code is in the app log:  docker compose logs app | grep "setup code"
 #
 # For local development of the app itself, use dev/postgres/compose.yaml (started by `./mvnw -pl app spring-boot:run`).
 name: agentic-sdlc
@@ -92,9 +96,17 @@ services:
       AGENTIC_SANDBOX_EGRESSPROXY: http://egress:3128
       # Sandboxes mount each run's directory from this volume, which the app sees at the workspace root.
       AGENTIC_SANDBOX_WORKSPACEVOLUME: agentic-workspaces
+      AGENTIC_SANDBOX_RUNTIME: ${AGENTIC_SANDBOX_RUNTIME:-}
     volumes:
       - agentic-workspaces:/var/lib/agentic/workspaces
       - agentic-data:/var/lib/agentic/data
+    healthcheck:
+      # Readiness from the internal management port, without curl in the image.
+      test: ['CMD', 'bash', '-c', 'exec 3<>/dev/tcp/127.0.0.1/8081 && printf "GET /actuator/health/readiness HTTP/1.0\r\n\r\n" >&3 && grep -q "UP" <&3']
+      interval: 15s
+      timeout: 5s
+      start_period: 60s
+      retries: 5
     extra_hosts:
       # Reach a model server on this machine, e.g. Ollama at http://host.docker.internal:11434
       - host.docker.internal:host-gateway
@@ -102,8 +114,38 @@ services:
       - default
       - docker-api
 
+  # Nightly database dumps (pg_dump custom format) in the agentic-backups volume, the oldest pruned after
+  # BACKUP_KEEP_DAYS. Copy them out:  docker compose cp backup:/backups ./backups
+  # Restore:  docker compose exec -T postgres pg_restore -U agentic -d agentic_sdlc --clean < backups/<file>.dump
+  # Back up the agentic-data volume (or AGENTIC_SECRETS_KEY) too: stored secrets cannot be read without that key.
+  backup:
+    image: postgres:18
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGHOST: postgres
+      PGUSER: agentic
+      PGDATABASE: agentic_sdlc
+      PGPASSWORD: ${POSTGRES_PASSWORD:-agentic-change-me}
+      KEEP_DAYS: ${BACKUP_KEEP_DAYS:-14}
+    entrypoint: ['sh', '-c']
+    command:
+      - |
+        while true; do
+          file=/backups/agentic-$$(date -u +%Y%m%dT%H%M%SZ).dump
+          if pg_dump -Fc -f "$$file.partial"; then mv "$$file.partial" "$$file"; echo "backup written: $$file";
+          else rm -f "$$file.partial"; echo "backup failed" >&2; fi
+          find /backups -name 'agentic-*.dump' -mtime +$$KEEP_DAYS -delete
+          sleep 86400
+        done
+    volumes:
+      - agentic-backups:/backups
+
 volumes:
   postgres-data: {}
+  agentic-backups: {}
   agentic-data: {}
   # Named explicitly: the app refers to it by name when it starts sandboxes.
   agentic-workspaces:

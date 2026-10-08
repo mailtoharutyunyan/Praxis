@@ -114,6 +114,12 @@ export function localSession(onChange: () => void): Session {
     signedIn: token !== null,
     signIn: async () => onChange(),
     signOut: async () => {
+      // End the session on the server too (every device); the local copy goes either way.
+      const current = unexpired(storageGet(LOCAL_TOKEN_KEY));
+      if (current) {
+        await fetch("/api/v1/auth/logout", { method: "POST", headers: { Authorization: `Bearer ${current}` } })
+          .catch(() => undefined);
+      }
       storageSet(LOCAL_TOKEN_KEY, null);
       onChange();
     },

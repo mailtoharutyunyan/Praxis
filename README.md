@@ -11,11 +11,11 @@ docker compose up -d --build
 Then open http://localhost:8080. This one command builds the app and its web UI and starts them with Postgres, the sandbox egress proxy and a Docker API proxy for sandboxes ([`compose.yaml`](compose.yaml)).
 
 On the first visit the UI walks you through setup:
-1. **Admin account.** Create the first user. It has every role, and it is the account that configures connectors.
+1. **Admin account.** Create the first user with the one-time **setup code** from the app log (`docker compose logs app | grep "setup code"`), so nobody who merely reaches a fresh install can claim it. The first user has every role.
 2. **Required connectors.** Until these are saved, the UI shows only the setup wizard.
    - **Application:** its public URL, used for links to runs.
    - **Code hosts:** GitHub, GitLab, Bitbucket or Azure DevOps, each with an access token. Each host you add is allowed for tasks.
-   - **Model:** Anthropic, OpenAI, Azure OpenAI, Bedrock, Gemini or Ollama, used for every agent role. For Ollama on the same machine, use `http://host.docker.internal:11434`.
+   - **Model:** Anthropic, OpenAI, Azure OpenAI, Bedrock, Gemini or Ollama, used for every agent role unless you name a different planning, review or triage model. For a model outside the built-in price list, enter its prices (0 for a free local model) so the per-run cost limit works. For Ollama on the same machine, use `http://host.docker.internal:11434`.
 3. **Optional connectors.** Save or **Skip** each one, and add skipped ones later under **Settings**: Jira, Slack, and pull request feedback (GitHub and GitLab webhooks).
 
 Each step has **Test connection**. Changes apply without a restart. Secrets are write-only in the UI, and they are encrypted (AES-256-GCM) in Postgres with a key from `AGENTIC_SECRETS_KEY` or, if that is unset, a key generated in the `agentic-data` volume. Back the key up together with the database. Set `POSTGRES_PASSWORD` and `AGENTIC_SECRETS_KEY` (`openssl rand -base64 32`) in a `.env` file before the first start; `AGENTIC_PORT` changes the port.
@@ -177,6 +177,15 @@ Several instances can share one database:
 - Jira comments and pull request polling hold a cluster-wide lease, so only one instance runs each.
 - On shutdown, a worker stops claiming runs and gives in-flight steps `drain-timeout` (20 s) to finish. Steps still running after that release their lease, so another instance picks them up immediately.
 
+### Operations
+- **Rate limits.** Per client address and instance: 10 sign-in attempts a minute, 600 webhook calls and 1200 other API or MCP calls (`agentic.rate-limit.*`), answered with 429 and `Retry-After`. Five wrong passwords in a row lock an account for a minute. Behind a proxy, set `server.forward-headers-strategy=framework` so the real client address counts.
+- **Retention.** Finished runs (done, failed, cancelled) are deleted with their events after `agentic.retention.finished-runs` (180 days; `0` keeps them). Facts learned in them stay. Revoked and expired API tokens are deleted after 30 days.
+- **Secrets key rotation.** Put the new key in `AGENTIC_SECRETS_KEY` and the old one in `AGENTIC_SECRETS_KEY_PREVIOUS` (comma-separated for several), then restart. Stored secrets are re-encrypted with the new key on startup, and the log says when the old key can be removed.
+- **Backups.** The Compose stack writes a nightly `pg_dump` into the `agentic-backups` volume and keeps `BACKUP_KEEP_DAYS` (14). Copy them out with `docker compose cp backup:/backups ./backups`, and restore with `docker compose exec -T postgres pg_restore -U agentic -d agentic_sdlc --clean < backups/<file>.dump`. Back up the secrets key as well.
+- **Health.** The app container reports healthy once `/actuator/health/readiness` on the internal port 8081 is `UP`.
+- **Logs.** Every line logged while a run is processed carries its id (`runId` in the MDC, a field in the JSON logs).
+- **Stronger sandbox isolation.** Set `AGENTIC_SANDBOX_RUNTIME=runsc` once [gVisor](https://gvisor.dev/docs/user_guide/install/) is installed on the Docker host, so sandboxes, sidecars and scanners run under its user-space kernel. Rootless Docker limits what the Docker API grants; access to it is otherwise root on the host.
+
 ### Supply chain
 - **Pinned actions.** Every GitHub Action in `.github/workflows/` is pinned to a full commit SHA, with its version in a trailing comment.
 - **Dependabot.** `.github/dependabot.yml` proposes weekly updates for GitHub Actions, Maven, npm (`ui/`) and the Dockerfile's base images. A release must be 14 days old before it is proposed; security updates are not delayed.
@@ -336,7 +345,7 @@ Start runs from Slack with a slash command, and follow them in a thread:
 ```
 1. Create a Slack app with the bot scopes `chat:write` and `commands`, and install it in your workspace.
 2. Add the slash command `/agentic` with the request URL `https://<public URL>/api/v1/webhooks/slack/commands`. Settings → Slack shows the exact URL.
-3. In Settings → Slack, enter the bot token (`xoxb-…`), the signing secret and, optionally, a default repository.
+3. In Settings → Slack, enter the bot token (`xoxb-…`), the signing secret, the **allowed channels and/or users** (Slack IDs such as `C0123ABCD`, `U0123ABCD`; commands from anywhere else are refused) and, optionally, a default repository.
 4. Invite the app to the channels where it is used.
 
 Each request is verified with the signing secret (Slack's `v0` HMAC over timestamp and body), and requests older than five minutes are rejected. The app posts the request in the channel and runs the task from that thread. Progress (gates, the pull request, the outcome) is posted as thread replies. Slack text is untrusted, like a ticket, so it always passes the SPEC gate, and the echoed request is escaped so it cannot mention `@channel`.
@@ -354,6 +363,8 @@ Sign-in:
 - **Built-in** (`AGENTIC_SECURITY_MODE=local`, used by `compose.yaml`): usernames and BCrypt-hashed passwords in Postgres. Five failed attempts lock a username for a minute. The app signs RS256 tokens with a key stored encrypted in the database, so every instance accepts them.
 - **Local profile:** paste a token from `scripts/dev-token.sh`.
 
+**Accounts (built-in sign-in).** Admins add people under **Users**, choose their roles, reset passwords and remove them; the last admin cannot be removed or demoted. Everyone changes their own password under **API & AI CLI**. Signing out ends the session on every device, and so do password and role changes. Instances pick up sign-outs made on other instances within 30 s.
+
 **Setup and Settings.** Until a code host and a model are configured, signed-in admins see the setup wizard and everyone else a notice. Admins manage connectors under **Settings**. Forms are generated from the connector catalog (`GET /api/v1/connectors`), so a new connector needs no UI change.
 
 Security: the backend sends a strict Content-Security-Policy, and model output is rendered as sanitized Markdown.
@@ -363,8 +374,25 @@ cd ui && npm ci && npm run dev             # hot reload on :5173, proxied to the
 cd ui && npm test                          # UI unit tests
 ```
 
-## MCP: use it from any AI client
-`/mcp` is an MCP server (Streamable HTTP, stateless; ADR-0005). Claude, ChatGPT, Cursor and IDE agents can use it to hand over work and follow it.
+## MCP: use it from an AI CLI or any AI client
+`/mcp` is an MCP server (Streamable HTTP, stateless; ADR-0005). From Claude Code, Codex CLI, Gemini CLI, Cursor or another MCP client you can hand over work and follow it in chat: "add a /health endpoint to acme/shop and tell me when it waits for approval".
+
+**Quickest way: a personal API token.** Open **API & AI CLI** in the web UI, create a token (name, roles, expiry), and copy the ready-made command for your CLI:
+```bash
+# Claude Code
+claude mcp add --transport http --scope user agentic-sdlc https://agentic.example.com/mcp \
+  --header "Authorization: Bearer asdlc_…"
+# Codex CLI
+export AGENTIC_SDLC_TOKEN=asdlc_…
+codex mcp add agentic-sdlc --url https://agentic.example.com/mcp --bearer-token-env-var AGENTIC_SDLC_TOKEN
+# Gemini CLI
+gemini mcp add --scope user --transport http --header "Authorization: Bearer asdlc_…" agentic-sdlc https://agentic.example.com/mcp
+```
+API tokens:
+- **Scope.** A token acts as its owner with some of the owner's roles (`viewer`, `operator`, `approver`), never `admin`. It cannot change settings, manage users or mint more tokens.
+- **Lifetime.** Every token expires (at most `agentic.security.api-token-max-ttl`, 365 days) and can be revoked; deleting a user revokes theirs.
+- **Storage.** Only a SHA-256 of the token is stored, and the UI shows it once.
+- The same token works for the REST API (`Authorization: Bearer asdlc_…`), in scripts and CI.
 
 | Tool | Role | What it does |
 |---|---|---|
@@ -379,15 +407,11 @@ cd ui && npm test                          # UI unit tests
 
 Gate approvals are not available over MCP. A human approves specs, implementations and pushes in the UI. Tasks submitted over MCP are untrusted, because an assistant may relay text it read elsewhere, so they always stop at the SPEC gate.
 
-**Authentication.** Clients send the user's access token, which needs the same roles as the API.
+**Authentication with an identity provider.** Clients can also send the user's OIDC access token, which needs the same roles as the API.
 - Clients that support MCP OAuth find the identity provider on their own. A 401 points to `/.well-known/oauth-protected-resource`, which names the issuer.
 - Tokens must carry this API's audience. If your IdP sets `aud` to the resource URL (RFC 8707), add `https://<host>/mcp` to `AGENTIC_JWT_AUDIENCE`, comma-separated.
 - Set `agentic.mcp.resource` to the public `/mcp` URL when behind a proxy, and `agentic.mcp.run-link-base` (`https://<host>/#/runs/`) for links.
 
-```bash
-# Claude Code
-claude mcp add --transport http agentic-sdlc https://agentic.example.com/mcp --header "Authorization: Bearer $TOKEN"
-```
 ```json
 // Cursor (.cursor/mcp.json) and other clients that take a URL plus headers
 { "mcpServers": { "agentic-sdlc": { "url": "https://agentic.example.com/mcp",
@@ -399,7 +423,7 @@ Claude Desktop and claude.ai: add a custom connector with the `/mcp` URL and sig
 `evals/` explains how to turn merged fixes into a suite. Each case is replayed through the production pipeline with gates auto-approved and nothing pushed, then graded in its sandbox with hidden fail-to-pass and pass-to-pass checks. The report gives pass@1, pass^k, cost and duration, and `--agentic.eval.min-pass-rate` makes it a CI gate for prompt and model changes.
 
 ## API (v1)
-All endpoints need a bearer JWT from your OIDC provider (`spring.security.oauth2.resourceserver.jwt.issuer-uri`). Roles are read from the `roles` claim, configurable with `agentic.security.roles-claim` (Keycloak: `realm_access.roles`). Errors are RFC 9457 problem details.
+All endpoints need a bearer token: a personal API token (`asdlc_…`), a JWT from the built-in sign-in, or a JWT from your OIDC provider (`spring.security.oauth2.resourceserver.jwt.issuer-uri`). The OpenAPI description is at `GET /v3/api-docs` (or `/v3/api-docs.yaml`), without a token. Roles are read from the `roles` claim, configurable with `agentic.security.roles-claim` (Keycloak: `realm_access.roles`). Errors are RFC 9457 problem details.
 
 | Method & path | Role | Purpose |
 |---|---|---|
@@ -422,6 +446,12 @@ All endpoints need a bearer JWT from your OIDC provider (`spring.security.oauth2
 | `PUT /api/v1/connectors/{id}` | admin | Save `{config, secrets}`; an empty secret keeps the stored one. |
 | `POST /api/v1/connectors/{id}/test` | admin | Check the given settings against the service without saving. |
 | `POST /api/v1/connectors/{id}/skip` | admin | Skip an optional connector. |
+| `POST /api/v1/auth/logout` | signed in | End every session of the caller (built-in sign-in). |
+| `POST /api/v1/auth/password` | signed in | `{currentPassword, newPassword}`; returns a new token. |
+| `GET /api/v1/tokens?all=` | signed in | Your API tokens (admins: `all=true` for everyone's); never the secret. |
+| `POST /api/v1/tokens` | signed in | `{name, roles, expiresInDays}` → `{details, token}`; the token is shown once. |
+| `DELETE /api/v1/tokens/{id}` | signed in | Revoke one of your tokens (admins: anyone's). |
+| `GET/POST /api/v1/users`, `PUT /api/v1/users/{u}/roles`, `PUT …/password`, `DELETE /api/v1/users/{u}` | admin | Built-in accounts. |
 
 Operations: `/actuator/health/{liveness,readiness}` and `/actuator/prometheus`, served on management port 8081 in the `prod` profile. Metrics: `agentic.stage.duration`, `agentic.run.transitions`, `agentic.stage.failures`, `agentic.step.abandoned`.
 

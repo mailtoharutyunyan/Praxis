@@ -58,7 +58,7 @@ class DockerSandboxTest {
 		Files.createDirectories(paths.repo(runId));
 		Files.writeString(paths.repo(runId).resolve("hello.txt"), "hello\n");
 		AgenticProperties.Sandbox settings = new AgenticProperties.Sandbox(true, tmp, "", "none", "", "",
-				DataSize.ofMegabytes(256), 1, 128, "", Duration.ofMinutes(1), Duration.ofMinutes(5), 2_000, "");
+				DataSize.ofMegabytes(256), 1, 128, "", Duration.ofMinutes(1), Duration.ofMinutes(5), 2_000, "", "");
 		sandbox = new DockerSandbox(docker, paths, settings);
 		sandbox.start(runId, new SandboxSpec(TestRepos.ALPINE, Map.of("GREETING", "hi"))).block();
 	}
@@ -89,7 +89,7 @@ class DockerSandboxTest {
 		UUID run = UUID.randomUUID();
 		docker.createVolumeCmd().withName(volume).exec();
 		DockerSandbox fromVolume = new DockerSandbox(docker, paths, new AgenticProperties.Sandbox(true, tmp, "", "none",
-				"", "", DataSize.ofMegabytes(256), 1, 128, "", Duration.ofMinutes(1), Duration.ofMinutes(5), 2_000, volume));
+				"", "", DataSize.ofMegabytes(256), 1, 128, "", Duration.ofMinutes(1), Duration.ofMinutes(5), 2_000, volume, ""));
 		try {
 			// Seed the volume as the app container would: <run>/repo/hello.txt, owned by the sandbox user.
 			String seeder = docker.createContainerCmd(TestRepos.ALPINE)
@@ -127,7 +127,7 @@ class DockerSandboxTest {
 		UUID foreign = UUID.randomUUID();
 		Files.createDirectories(otherPaths.repo(foreign));
 		DockerSandbox other = new DockerSandbox(docker, otherPaths, new AgenticProperties.Sandbox(true, otherRoot, "", "none",
-				"", "", DataSize.ofMegabytes(256), 1, 128, "", Duration.ofMinutes(1), Duration.ofMinutes(5), 2_000, ""));
+				"", "", DataSize.ofMegabytes(256), 1, 128, "", Duration.ofMinutes(1), Duration.ofMinutes(5), 2_000, "", ""));
 		try {
 			other.start(foreign, new SandboxSpec(TestRepos.ALPINE, Map.of())).block();
 			List<UUID> cleaned = new SandboxJanitor(docker, store, sandbox, checkout).sweep().collectList().block();
@@ -136,6 +136,27 @@ class DockerSandboxTest {
 		}
 		finally {
 			other.destroy(foreign).block();
+		}
+	}
+
+	@Test
+	void anExplicitRuntimeIsUsedForSandboxes() {
+		UUID run = UUID.randomUUID();
+		DockerSandbox withRuntime = new DockerSandbox(docker, paths, new AgenticProperties.Sandbox(true, tmp, "", "none",
+				"", "", DataSize.ofMegabytes(256), 1, 128, "", Duration.ofMinutes(1), Duration.ofMinutes(5), 2_000, "",
+				"runc"));
+		try {
+			java.nio.file.Files.createDirectories(paths.repo(run));
+			withRuntime.start(run, new SandboxSpec(TestRepos.ALPINE, Map.of())).block();
+			String name = docker.listContainersCmd().withLabelFilter(Map.of(DockerSandbox.LABEL_RUN, run.toString())).exec()
+					.getFirst().getNames()[0];
+			assertThat(docker.inspectContainerCmd(name).exec().getHostConfig().getRuntime()).isEqualTo("runc");
+		}
+		catch (java.io.IOException e) {
+			throw new java.io.UncheckedIOException(e);
+		}
+		finally {
+			withRuntime.destroy(run).block();
 		}
 	}
 
@@ -240,7 +261,7 @@ class DockerSandboxTest {
 
 	private AgenticProperties.Sandbox settings(String network, String proxy, String user) {
 		return new AgenticProperties.Sandbox(true, tmp, "", network, proxy, "localhost,127.0.0.1",
-				DataSize.ofMegabytes(256), 1, 128, user, Duration.ofMinutes(1), Duration.ofMinutes(5), 2_000, "");
+				DataSize.ofMegabytes(256), 1, 128, user, Duration.ofMinutes(1), Duration.ofMinutes(5), 2_000, "", "");
 	}
 
 	@Test

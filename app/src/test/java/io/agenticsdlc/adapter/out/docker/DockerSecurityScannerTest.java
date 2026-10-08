@@ -54,7 +54,7 @@ class DockerSecurityScannerTest {
 		Files.writeString(repo.resolve("legacy.ini"), credentials);
 		Files.writeString(repo.resolve("pom.xml"), "<project/>");
 		AgenticProperties.Sandbox sandboxSettings = new AgenticProperties.Sandbox(true, tmp, "", "none", "", "",
-				DataSize.ofMegabytes(256), 1, 128, "", Duration.ofMinutes(1), Duration.ofMinutes(5), 2_000, "");
+				DataSize.ofMegabytes(256), 1, 128, "", Duration.ofMinutes(1), Duration.ofMinutes(5), 2_000, "", "");
 		DockerSecurityScanner scanner = new DockerSecurityScanner(docker, paths, new DockerSandbox(docker, paths,
 				sandboxSettings), sandboxSettings, new AgenticProperties.Scan(true, "zricethezav/gitleaks:v8.30.1", true,
 						"ghcr.io/google/osv-scanner:v2.6.0", Duration.ofMinutes(2)), json);

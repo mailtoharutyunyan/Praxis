@@ -31,12 +31,19 @@
 		<jgit.version>7.8.0.202609011348-r</jgit.version>
 		<cyclonedx-maven-plugin.version>2.9.3</cyclonedx-maven-plugin.version>
 		<bouncycastle.version>1.86</bouncycastle.version>
+		<springdoc.version>3.1.1</springdoc.version>
 		<!-- Line coverage each module must reach in `verify`; modules may raise or lower it. -->
 		<coverage.minimum>0.80</coverage.minimum>
 	</properties>
 
 	<dependencyManagement>
 		<dependencies>
+			<!-- springdoc and Spring AI both bring the swagger annotations; use springdoc's newer, compatible one. -->
+			<dependency>
+				<groupId>io.swagger.core.v3</groupId>
+				<artifactId>swagger-annotations-jakarta</artifactId>
+				<version>2.2.55</version>
+			</dependency>
 			<dependency>
 				<groupId>io.agenticsdlc</groupId>
 				<artifactId>core</artifactId>

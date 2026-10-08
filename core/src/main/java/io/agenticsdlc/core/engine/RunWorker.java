@@ -62,10 +62,17 @@ public final class RunWorker {
 		return owner;
 	}
 
+	/**
+	 * Reactor context key holding the id of the run being processed, so adapters can tag what they log (the app
+	 * copies it into the logging MDC).
+	 */
+	public static final String RUN_ID = "runId";
+
 	/** Claim and advance one run. Emits true if a run was processed, false if none was available. */
 	public Mono<Boolean> processNext() {
 		return store.claim(owner, lease)
-				.flatMap(run -> process(run).thenReturn(true))
+				.flatMap(run -> process(run).contextWrite(reactor.util.context.Context.of(RUN_ID, run.id().toString()))
+						.thenReturn(true))
 				.defaultIfEmpty(false);
 	}
 

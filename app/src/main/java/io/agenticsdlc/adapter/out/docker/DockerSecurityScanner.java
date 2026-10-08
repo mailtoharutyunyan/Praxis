@@ -152,7 +152,7 @@ public class DockerSecurityScanner implements SecurityScanner {
 	private String run(UUID runId, String image, List<String> command, String network, List<String> env)
 			throws InterruptedException {
 		sandbox.pullIfMissing(image);
-		HostConfig host = sandbox.mounts().mount(HostConfig.newHostConfig(), paths.repo(runId), MOUNT, true)
+		HostConfig host = sandbox.mounts().mount(sandbox.hostConfig(), paths.repo(runId), MOUNT, true)
 				.withCapDrop(Capability.values())
 				.withSecurityOpts(List.of("no-new-privileges"))
 				.withMemory(1024L * 1024 * 1024)

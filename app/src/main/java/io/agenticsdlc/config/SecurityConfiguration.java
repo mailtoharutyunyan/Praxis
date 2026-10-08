@@ -73,6 +73,8 @@ class SecurityConfiguration {
 						.pathMatchers(HttpMethod.GET, "/", "/index.html", "/silent-renew.html", "/assets/**", "/favicon.ico",
 								"/favicon.svg", "/ui-config.json")
 						.permitAll()
+						// The API description holds no data; clients and code generators read it without a token.
+						.pathMatchers(HttpMethod.GET, "/v3/api-docs", "/v3/api-docs.yaml", "/v3/api-docs/**").permitAll()
 						// Webhooks authenticate by signature or token inside the controller.
 						.pathMatchers(HttpMethod.POST, "/api/v1/webhooks/**").permitAll()
 						// First-run setup status and local sign-in (ADR-0007); they hold no secrets.

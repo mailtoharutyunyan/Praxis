@@ -9,6 +9,8 @@ import { RunPage } from "./pages/RunPage";
 import { RunsPage } from "./pages/RunsPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { SignInPage } from "./pages/SignInPage";
+import { AccountPage } from "./pages/AccountPage";
+import { UsersPage } from "./pages/UsersPage";
 
 /** Hash routes keep deep links (e.g. from Jira comments) working without server-side routing. */
 function useHashRoute(): [string, (path: string) => void] {
@@ -85,11 +87,13 @@ export function App() {
   }
   const isAdmin = session.roles.includes("admin");
   const runMatch = path.match(/^\/runs\/([0-9a-f-]{36})$/);
-  const section = path === "/memory" ? "memory" : path === "/settings" ? "settings" : "runs";
+  const section = ["/memory", "/settings", "/account", "/users"].includes(path) ? path.slice(1) : "runs";
   const nav = setup.complete && session.signedIn ? [
     { key: "runs", href: "#/", icon: "runs" as const, label: "Runs", count: attention },
     { key: "memory", href: "#/memory", icon: "memory" as const, label: "Memory", count: 0 },
+    { key: "account", href: "#/account", icon: "terminal" as const, label: "API & AI CLI", count: 0 },
     ...(isAdmin ? [{ key: "settings", href: "#/settings", icon: "settings" as const, label: "Settings", count: 0 }] : []),
+    ...(isAdmin && local ? [{ key: "users", href: "#/users", icon: "user" as const, label: "Users", count: 0 }] : []),
   ] : [];
   const name = session.subject ?? "signed out";
 
@@ -110,13 +114,13 @@ export function App() {
         <div className="sidebar-foot">
           {session.signedIn ? (
             <>
-              <div className="user">
+              <a className="user" href="#/account" style={{ color: "inherit", textDecoration: "none" }} title="Account">
                 <span className="avatar" aria-hidden="true">{name.slice(0, 2).toUpperCase()}</span>
                 <div style={{ minWidth: 0 }}>
                   <div className="user-name">{name}</div>
                   <div className="user-roles">{session.roles.join(" · ") || "no roles"}</div>
                 </div>
-              </div>
+              </a>
               <button className="ghost" onClick={() => void session.signOut()}><Icon name="logout" />Sign out</button>
             </>
           ) : <button className="primary" onClick={() => void session.signIn()}>Sign in</button>}
@@ -142,6 +146,11 @@ export function App() {
               : <div className="card empty"><Icon name="settings" /><p>Setup is not finished yet. An admin needs to connect a code host and a model first.</p></div>
           ) : path === "/settings" && isAdmin ? (
             <SettingsPage api={api} onChanged={bump} />
+          ) : path === "/users" && isAdmin && local ? (
+            <UsersPage api={api} self={session.subject ?? ""} />
+          ) : path === "/account" ? (
+            <AccountPage api={api} subject={session.subject ?? ""} roles={session.roles} local={local}
+              onPasswordChanged={(signedIn) => { storeLocalToken(signedIn.token); bump(); }} />
           ) : runMatch ? (
             <RunPage api={api} id={runMatch[1]} token={session.token} roles={session.roles} />
           ) : path === "/memory" ? (

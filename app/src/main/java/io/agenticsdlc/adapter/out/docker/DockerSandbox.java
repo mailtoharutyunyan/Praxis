@@ -174,7 +174,7 @@ public class DockerSandbox implements Sandbox {
 			pullIfMissing(sidecar.image());
 			List<String> env = new ArrayList<>();
 			sidecar.env().forEach((k, v) -> env.add(k + "=" + v));
-			HostConfig host = HostConfig.newHostConfig()
+			HostConfig host = hostConfig()
 					.withSecurityOpts(List.of("no-new-privileges"))
 					.withMemory(settings.memory().toBytes())
 					.withMemorySwap(settings.memory().toBytes())
@@ -306,7 +306,7 @@ public class DockerSandbox implements Sandbox {
 				env.addAll(proxyEnvironment(proxy, settings.noProxy()));
 			}
 			spec.env().forEach((k, v) -> env.add(k + "=" + v));
-			HostConfig host = mounts.mount(HostConfig.newHostConfig(), repo, Sandbox.WORKDIR, false)
+			HostConfig host = mounts.mount(hostConfig(), repo, Sandbox.WORKDIR, false)
 					.withCapDrop(Capability.values())
 					.withSecurityOpts(List.of("no-new-privileges"))
 					.withMemory(settings.memory().toBytes())
@@ -482,6 +482,12 @@ public class DockerSandbox implements Sandbox {
 			Thread.sleep(20);
 		}
 		return -1;
+	}
+
+	/** A host config with the configured container runtime (e.g. gVisor's {@code runsc}); scanners use it too. */
+	HostConfig hostConfig() {
+		HostConfig host = HostConfig.newHostConfig();
+		return settings.runtime().isBlank() ? host : host.withRuntime(settings.runtime());
 	}
 
 	/** How workspace directories are mounted; scanners use it too. */

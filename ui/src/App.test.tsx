@@ -60,6 +60,7 @@ describe("Built-in sign-in and onboarding", () => {
 
   it("asks for the admin account on first start and then opens onboarding", async () => {
     let adminCreated = false;
+    const setupBodies: string[] = [];
     const fresh = token({ sub: "admin", roles: ["viewer", "operator", "approver", "admin"], exp: Date.now() / 1000 + 3600 });
     const fetch = routes({
       "/ui-config.json": localConfig,
@@ -72,6 +73,7 @@ describe("Built-in sign-in and onboarding", () => {
       }),
       "/api/v1/setup/admin": () => {
         adminCreated = true;
+        setupBodies.push("sent");
         return Response.json({ token: fresh, expiresAt: "2026-10-10T00:00:00Z", username: "admin", roles: ["admin"] });
       },
       "/api/v1/connectors": () => Response.json([
@@ -88,11 +90,15 @@ describe("Built-in sign-in and onboarding", () => {
     render(<App />);
 
     expect(await screen.findByRole("heading", { name: "Create the admin account" })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText(/^Setup code/), { target: { value: "ABCD-EFGH-JKLM" } });
     fireEvent.change(screen.getByLabelText(/^Password/), { target: { value: "correct horse battery" } });
     fireEvent.change(screen.getByLabelText(/Confirm password/), { target: { value: "correct horse battery" } });
     fireEvent.click(screen.getByRole("button", { name: "Create account" }));
 
     expect(await screen.findByRole("heading", { name: "Set up Agentic SDLC" })).toBeInTheDocument();
+    expect(setupBodies).toHaveLength(1);
+    const adminCall = fetch.mock.calls.find(([url]) => String(url) === "/api/v1/setup/admin") as unknown as [string, RequestInit];
+    expect(JSON.parse(String(adminCall[1].body))).toMatchObject({ setupCode: "ABCD-EFGH-JKLM", username: "admin" });
     expect(await screen.findByRole("form", { name: "Code hosts" })).toBeInTheDocument();
     // A required step has no Skip; an optional one does.
     expect(screen.queryByRole("button", { name: "Skip" })).toBeNull();

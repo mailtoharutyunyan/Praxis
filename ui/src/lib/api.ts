@@ -1,4 +1,4 @@
-import type { Connector, ConnectorUpdate, TestResult } from "./setup";
+import type { Account, ApiTokenView, Connector, ConnectorUpdate, CreatedToken, SignedIn, TestResult } from "./setup";
 import type { FactStatus, Gate, GateDecision, Problem, RepoFact, RiskLevel, Run, RunEvent, RunPage, RunState, ScmKind } from "./types";
 
 export class ApiError extends Error {
@@ -36,6 +36,7 @@ export class Api {
       }
       throw new ApiError(response.status, problem);
     }
+    if (response.status === 204) return undefined as T;
     return (await response.json()) as T;
   }
 
@@ -115,5 +116,41 @@ export class Api {
 
   skipConnector(id: string): Promise<Connector> {
     return this.request(`/connectors/${encodeURIComponent(id)}/skip`, { method: "POST" });
+  }
+
+  tokens(all = false): Promise<ApiTokenView[]> {
+    return this.request(`/tokens${all ? "?all=true" : ""}`);
+  }
+
+  createToken(name: string, roles: string[], expiresInDays: number): Promise<CreatedToken> {
+    return this.request("/tokens", { method: "POST", body: JSON.stringify({ name, roles, expiresInDays }) });
+  }
+
+  revokeToken(id: string): Promise<void> {
+    return this.request(`/tokens/${encodeURIComponent(id)}`, { method: "DELETE" });
+  }
+
+  changePassword(currentPassword: string, newPassword: string): Promise<SignedIn> {
+    return this.request("/auth/password", { method: "POST", body: JSON.stringify({ currentPassword, newPassword }) });
+  }
+
+  users(): Promise<Account[]> {
+    return this.request("/users");
+  }
+
+  createUser(username: string, password: string, roles: string[]): Promise<Account> {
+    return this.request("/users", { method: "POST", body: JSON.stringify({ username, password, roles }) });
+  }
+
+  setRoles(username: string, roles: string[]): Promise<void> {
+    return this.request(`/users/${encodeURIComponent(username)}/roles`, { method: "PUT", body: JSON.stringify({ roles }) });
+  }
+
+  resetPassword(username: string, password: string): Promise<void> {
+    return this.request(`/users/${encodeURIComponent(username)}/password`, { method: "PUT", body: JSON.stringify({ password }) });
+  }
+
+  deleteUser(username: string): Promise<void> {
+    return this.request(`/users/${encodeURIComponent(username)}`, { method: "DELETE" });
   }
 }

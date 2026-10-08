@@ -23,6 +23,7 @@ class WorkerConfiguration {
 	@Bean
 	RunWorker runWorker(RunStore store, ObjectProvider<StageHandler> handlers, RunLimits limits, Clock clock,
 			AgenticProperties properties, MeterRegistry meters, NodeIdentity node) {
+		RunLogging.install();
 		return new RunWorker(store, effective(handlers.orderedStream().toList()), limits, clock, workerId(node),
 				properties.worker().lease(), new MeteredWorkerListener(meters));
 	}

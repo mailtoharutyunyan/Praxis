@@ -19,7 +19,8 @@ export function SignInPage({ firstRun, onSignedIn }: { firstRun: boolean; onSign
     setBusy(true);
     setError(null);
     try {
-      onSignedIn(firstRun ? await createAdmin(username, password) : await login(username, password));
+      onSignedIn(firstRun ? await createAdmin(String(data.get("setupCode") ?? ""), username, password)
+        : await login(username, password));
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Could not reach the server.");
     } finally {
@@ -37,6 +38,16 @@ export function SignInPage({ firstRun, onSignedIn }: { firstRun: boolean; onSign
           : "Agentic SDLC turns tasks into reviewed pull requests."}</p>
       </div>
       <form className="stack" onSubmit={(e) => { e.preventDefault(); void submit(e.currentTarget); }}>
+        {firstRun && (
+          <label>Setup code
+            <input name="setupCode" required autoComplete="off" spellCheck={false} placeholder="XXXX-XXXX-XXXX"
+              style={{ fontFamily: "var(--mono)", letterSpacing: "0.05em" }} />
+            <span className="muted small">
+              Printed in the app log on first start, so only whoever runs the server can create the admin:{" "}
+              <code>docker compose logs app | grep "setup code"</code>
+            </span>
+          </label>
+        )}
         <label>Username<input name="username" required autoComplete="username" defaultValue={firstRun ? "admin" : ""} /></label>
         <label>Password
           <input name="password" type="password" required minLength={firstRun ? 10 : 1}

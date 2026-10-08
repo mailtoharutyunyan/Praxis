@@ -97,6 +97,14 @@ class RunApiTest {
 	}
 
 	@Test
+	void theApiDescriptionIsPublicAndCoversTheApi() {
+		String docs = client.get().uri("/v3/api-docs").exchange().expectStatus().isOk().expectBody(String.class)
+				.returnResult().getResponseBody();
+		assertThat(docs).contains("\"/api/v1/tasks\"", "\"/api/v1/runs/{runId}/decisions\"", "\"/api/v1/tokens\"",
+				"\"/api/v1/connectors\"", "\"bearer\"").doesNotContain("/api/v1/webhooks/slack/commands\":{\"get");
+	}
+
+	@Test
 	void mediumRiskRunPassesSpecAndPublishGatesToPrOpen() {
 		Object id = submit("[medium] Add search").get("id");
 

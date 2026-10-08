@@ -50,6 +50,13 @@ spring:
 server:
   shutdown: graceful
 
+# OpenAPI description of the REST API, for clients and code generators: GET /v3/api-docs (JSON) or .yaml.
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  paths-to-match: /api/v1/**
+  packages-to-scan: io.agenticsdlc.adapter.in.web
+
 management:
   endpoints:
     web:

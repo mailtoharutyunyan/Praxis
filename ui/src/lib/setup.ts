@@ -12,6 +12,8 @@ export interface SetupStep {
 export interface SetupStatus {
   authMode: "oidc" | "dev" | "local";
   complete: boolean;
+  /** Creating the first admin needs the one-time code printed in the application log. */
+  setupCodeRequired?: boolean;
   steps: SetupStep[];
 }
 
@@ -83,8 +85,8 @@ export function getSetup(): Promise<SetupStatus> {
   return publicJson("/api/v1/setup");
 }
 
-export function createAdmin(username: string, password: string): Promise<SignedIn> {
-  return publicJson("/api/v1/setup/admin", { method: "POST", body: JSON.stringify({ username, password }) });
+export function createAdmin(setupCode: string, username: string, password: string): Promise<SignedIn> {
+  return publicJson("/api/v1/setup/admin", { method: "POST", body: JSON.stringify({ setupCode, username, password }) });
 }
 
 export function login(username: string, password: string): Promise<SignedIn> {
@@ -94,4 +96,30 @@ export function login(username: string, password: string): Promise<SignedIn> {
 /** Key under which a list item's secret is stored, e.g. {@code hosts.github.com.token}. */
 export function itemSecretKey(list: string, itemKey: string, field: string): string {
   return `${list}.${itemKey}.${field}`;
+}
+
+export interface ApiTokenView {
+  id: string;
+  name: string;
+  owner: string;
+  roles: string[];
+  hint: string;
+  createdAt: string;
+  expiresAt: string;
+  lastUsedAt: string | null;
+  revokedAt: string | null;
+  active: boolean;
+}
+
+export interface CreatedToken {
+  details: ApiTokenView;
+  /** The secret: shown once, never retrievable again. */
+  token: string;
+}
+
+export interface Account {
+  username: string;
+  roles: string[];
+  createdAt: string;
+  locked: boolean;
 }
