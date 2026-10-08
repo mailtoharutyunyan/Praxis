@@ -2,7 +2,7 @@ import { UserManager, WebStorageStateStore } from "oidc-client-ts";
 
 /** Runtime configuration served by the backend at /ui-config.json, so one build works in every environment. */
 export interface UiConfig {
-  authMode: "oidc" | "dev";
+  authMode: "oidc" | "dev" | "local";
   issuer?: string;
   clientId?: string;
   scope?: string;
@@ -19,6 +19,7 @@ export interface Session {
 }
 
 const DEV_TOKEN_KEY = "agentic.devToken";
+const LOCAL_TOKEN_KEY = "agentic.localToken";
 
 export async function loadConfig(): Promise<UiConfig> {
   const response = await fetch("/ui-config.json");
@@ -84,6 +85,36 @@ export function devSession(config: UiConfig, onChange: () => void): Session {
     },
     signOut: async () => {
       storageSet(DEV_TOKEN_KEY, null);
+      onChange();
+    },
+  };
+}
+
+/** Stores a token from the built-in sign-in (or clears it with null). */
+export function storeLocalToken(token: string | null): void {
+  storageSet(LOCAL_TOKEN_KEY, token);
+}
+
+function unexpired(token: string | null): string | null {
+  const exp = claims(token).exp;
+  return token && typeof exp === "number" && exp * 1000 > Date.now() ? token : null;
+}
+
+/**
+ * Built-in sign-in (agentic.security.mode=local): the app issues the token; signing in happens on the sign-in page,
+ * so {@code signIn} only asks the app to show it.
+ */
+export function localSession(onChange: () => void): Session {
+  const token = unexpired(storageGet(LOCAL_TOKEN_KEY));
+  const payload = claims(token);
+  return {
+    token: async () => unexpired(storageGet(LOCAL_TOKEN_KEY)),
+    subject: (payload.sub as string | undefined) ?? null,
+    roles: rolesFrom(payload, "roles"),
+    signedIn: token !== null,
+    signIn: async () => onChange(),
+    signOut: async () => {
+      storageSet(LOCAL_TOKEN_KEY, null);
       onChange();
     },
   };

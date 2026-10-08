@@ -1,9 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Api } from "./lib/api";
-import { devSession, loadConfig, oidcSession, type Session, type UiConfig } from "./lib/auth";
+import { devSession, loadConfig, localSession, oidcSession, storeLocalToken, type Session, type UiConfig } from "./lib/auth";
+import { getSetup, type SetupStatus } from "./lib/setup";
 import { MemoryPage } from "./pages/MemoryPage";
+import { OnboardingPage } from "./pages/OnboardingPage";
 import { RunPage } from "./pages/RunPage";
 import { RunsPage } from "./pages/RunsPage";
+import { SettingsPage } from "./pages/SettingsPage";
+import { SignInPage } from "./pages/SignInPage";
 
 /** Hash routes keep deep links (e.g. from Jira comments) working without server-side routing. */
 function useHashRoute(): [string, (path: string) => void] {
@@ -23,6 +27,7 @@ function reason(error: unknown, fallback: string): string {
 
 export function App() {
   const [config, setConfig] = useState<UiConfig | null>(null);
+  const [setup, setSetup] = useState<SetupStatus | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [version, setVersion] = useState(0);
   const [failure, setFailure] = useState<string | null>(null);
@@ -32,8 +37,17 @@ export function App() {
   useEffect(() => {
     loadConfig().then(setConfig, (e: unknown) => setFailure(reason(e, "The configuration could not be loaded.")));
   }, []);
+  // Setup status decides whether onboarding shows; it is public and re-read when the session changes.
   useEffect(() => {
     if (!config) return;
+    getSetup().then(setSetup, (e: unknown) => setFailure(reason(e, "The setup status could not be loaded.")));
+  }, [config, version]);
+  useEffect(() => {
+    if (!config) return;
+    if (config.authMode === "local") {
+      setSession(localSession(bump));
+      return;
+    }
     if (config.authMode !== "oidc") {
       setSession(devSession(config, bump));
       return;
@@ -59,15 +73,27 @@ export function App() {
       </div>
     );
   }
-  if (!session || !api) return <div className="shell"><p className="muted">Loading…</p></div>;
+  if (!session || !api || !setup || !config) return <div className="shell"><p className="muted">Loading…</p></div>;
 
+  const local = config.authMode === "local";
+  const adminPending = setup.steps.some((s) => s.id === "admin" && s.state === "PENDING");
+  if (local && (adminPending || !session.signedIn)) {
+    return (
+      <div className="shell">
+        <header className="topbar"><span className="brand">Agentic SDLC</span></header>
+        <SignInPage firstRun={adminPending} onSignedIn={(signedIn) => { storeLocalToken(signedIn.token); bump(); }} />
+      </div>
+    );
+  }
+  const isAdmin = session.roles.includes("admin");
   const runMatch = path.match(/^\/runs\/([0-9a-f-]{36})$/);
   return (
     <div className="shell">
       <header className="topbar">
         <a className="brand" href="#/">Agentic SDLC <span>runs</span></a>
         <div className="row">
-          {session.signedIn && <a className="small" href="#/memory">Memory</a>}
+          {session.signedIn && setup.complete && <a className="small" href="#/memory">Memory</a>}
+          {session.signedIn && setup.complete && isAdmin && <a className="small" href="#/settings">Settings</a>}
           {session.signedIn && <span className="muted small">{session.subject} · {session.roles.join(", ") || "no roles"}</span>}
           {session.signedIn
             ? <button onClick={() => void session.signOut()}>Sign out</button>
@@ -76,6 +102,12 @@ export function App() {
       </header>
       {!session.signedIn ? (
         <div className="card"><p>Sign in to see and approve runs.</p></div>
+      ) : !setup.complete ? (
+        isAdmin
+          ? <OnboardingPage api={api} status={setup} onChanged={setSetup} />
+          : <div className="card"><p>Setup is not finished yet. An admin needs to connect a code host and a model first.</p></div>
+      ) : path === "/settings" && isAdmin ? (
+        <SettingsPage api={api} onChanged={bump} />
       ) : runMatch ? (
         <RunPage api={api} id={runMatch[1]} token={session.token} roles={session.roles} />
       ) : path === "/memory" ? (

@@ -6,7 +6,7 @@ import io.agenticsdlc.core.domain.RunState;
 import io.agenticsdlc.core.port.RunStore;
 import io.agenticsdlc.core.workspace.RepositoryCheckout;
 import io.agenticsdlc.core.workspace.Sandbox;
-import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -17,7 +17,8 @@ import reactor.core.scheduler.Schedulers;
 /**
  * Periodically removes sandboxes and working copies of runs that are finished (DONE, FAILED, CANCELLED) or no longer
  * exist. Runs at PR_OPEN keep theirs for follow-up changes. Runs on every instance (each cleans its own Docker host
- * and disk); removal is idempotent.
+ * and disk); removal is idempotent. Only containers of this installation's workspace are considered: another install
+ * (or a test) on the same Docker host has runs this database does not know.
  */
 public class SandboxJanitor {
 
@@ -27,8 +28,10 @@ public class SandboxJanitor {
 	private final RunStore store;
 	private final Sandbox sandbox;
 	private final RepositoryCheckout checkout;
+	private final String workspace;
 
-	public SandboxJanitor(DockerClient docker, RunStore store, Sandbox sandbox, RepositoryCheckout checkout) {
+	public SandboxJanitor(DockerClient docker, RunStore store, DockerSandbox sandbox, RepositoryCheckout checkout) {
+		this.workspace = sandbox.mounts().identity();
 		this.docker = docker;
 		this.store = store;
 		this.sandbox = sandbox;
@@ -38,7 +41,7 @@ public class SandboxJanitor {
 	/** One sweep; emits the run ids that were cleaned up. */
 	public Flux<UUID> sweep() {
 		return Mono.fromCallable(() -> docker.listContainersCmd().withShowAll(true)
-						.withLabelFilter(List.of(DockerSandbox.LABEL_RUN)).exec())
+						.withLabelFilter(Map.of(DockerSandbox.LABEL_WORKSPACE, workspace)).exec())
 				.subscribeOn(Schedulers.boundedElastic())
 				.flatMapMany(Flux::fromIterable)
 				.map(Container::getLabels)

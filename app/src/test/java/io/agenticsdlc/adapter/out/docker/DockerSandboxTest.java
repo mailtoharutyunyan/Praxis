@@ -58,7 +58,7 @@ class DockerSandboxTest {
 		Files.createDirectories(paths.repo(runId));
 		Files.writeString(paths.repo(runId).resolve("hello.txt"), "hello\n");
 		AgenticProperties.Sandbox settings = new AgenticProperties.Sandbox(true, tmp, "", "none", "", "",
-				DataSize.ofMegabytes(256), 1, 128, "", Duration.ofMinutes(1), Duration.ofMinutes(5), 2_000);
+				DataSize.ofMegabytes(256), 1, 128, "", Duration.ofMinutes(1), Duration.ofMinutes(5), 2_000, "");
 		sandbox = new DockerSandbox(docker, paths, settings);
 		sandbox.start(runId, new SandboxSpec(TestRepos.ALPINE, Map.of("GREETING", "hi"))).block();
 	}
@@ -80,6 +80,63 @@ class DockerSandboxTest {
 
 		run("echo written > out.txt", Duration.ofSeconds(30));
 		assertThat(Files.readString(paths.repo(runId).resolve("out.txt"))).isEqualTo("written\n");
+	}
+
+	/** As in Docker Compose: the app sees the workspace in a volume, sandboxes mount the run's part of it. */
+	@Test
+	void mountsTheRunsDirectoryFromAWorkspaceVolume() {
+		String volume = "agentic-test-workspace-" + UUID.randomUUID();
+		UUID run = UUID.randomUUID();
+		docker.createVolumeCmd().withName(volume).exec();
+		DockerSandbox fromVolume = new DockerSandbox(docker, paths, new AgenticProperties.Sandbox(true, tmp, "", "none",
+				"", "", DataSize.ofMegabytes(256), 1, 128, "", Duration.ofMinutes(1), Duration.ofMinutes(5), 2_000, volume));
+		try {
+			// Seed the volume as the app container would: <run>/repo/hello.txt, owned by the sandbox user.
+			String seeder = docker.createContainerCmd(TestRepos.ALPINE)
+					.withCmd("sh", "-c", "mkdir -p /ws/" + run + "/repo && echo from-volume > /ws/" + run
+							+ "/repo/hello.txt && chown -R " + fromVolume.user() + " /ws/" + run)
+					.withHostConfig(com.github.dockerjava.api.model.HostConfig.newHostConfig().withBinds(
+							new com.github.dockerjava.api.model.Bind(volume, new com.github.dockerjava.api.model.Volume("/ws"))))
+					.exec().getId();
+			docker.startContainerCmd(seeder).exec();
+			docker.waitContainerCmd(seeder).start().awaitStatusCode(60, java.util.concurrent.TimeUnit.SECONDS);
+			docker.removeContainerCmd(seeder).exec();
+
+			fromVolume.start(run, new SandboxSpec(TestRepos.ALPINE, Map.of())).block();
+			CommandResult cat = fromVolume.exec(run, "cat hello.txt && echo more > out.txt && ls /workspace",
+					Duration.ofSeconds(30)).block();
+			assertThat(cat.succeeded()).as(cat.output()).isTrue();
+			assertThat(cat.output()).contains("from-volume", "out.txt");
+		}
+		finally {
+			fromVolume.destroy(run).block();
+			docker.removeVolumeCmd(volume).exec();
+		}
+	}
+
+	/** Another install (or a test) on the same Docker host has runs this database does not know: leave them alone. */
+	@Test
+	void cleanupOnlyTouchesThisInstallationsContainers() throws Exception {
+		io.agenticsdlc.core.port.RunStore store = org.mockito.Mockito.mock(io.agenticsdlc.core.port.RunStore.class);
+		org.mockito.Mockito.when(store.find(org.mockito.ArgumentMatchers.any())).thenReturn(reactor.core.publisher.Mono.empty());
+		io.agenticsdlc.core.workspace.RepositoryCheckout checkout =
+				org.mockito.Mockito.mock(io.agenticsdlc.core.workspace.RepositoryCheckout.class);
+		org.mockito.Mockito.when(checkout.remove(org.mockito.ArgumentMatchers.any())).thenReturn(reactor.core.publisher.Mono.empty());
+		Path otherRoot = tmp.resolve("other-install");
+		WorkspacePaths otherPaths = new WorkspacePaths(otherRoot);
+		UUID foreign = UUID.randomUUID();
+		Files.createDirectories(otherPaths.repo(foreign));
+		DockerSandbox other = new DockerSandbox(docker, otherPaths, new AgenticProperties.Sandbox(true, otherRoot, "", "none",
+				"", "", DataSize.ofMegabytes(256), 1, 128, "", Duration.ofMinutes(1), Duration.ofMinutes(5), 2_000, ""));
+		try {
+			other.start(foreign, new SandboxSpec(TestRepos.ALPINE, Map.of())).block();
+			List<UUID> cleaned = new SandboxJanitor(docker, store, sandbox, checkout).sweep().collectList().block();
+			assertThat(cleaned).contains(runId).doesNotContain(foreign);
+			assertThat(other.exec(foreign, "true", Duration.ofSeconds(30)).block().succeeded()).isTrue();
+		}
+		finally {
+			other.destroy(foreign).block();
+		}
 	}
 
 	@Test
@@ -183,7 +240,7 @@ class DockerSandboxTest {
 
 	private AgenticProperties.Sandbox settings(String network, String proxy, String user) {
 		return new AgenticProperties.Sandbox(true, tmp, "", network, proxy, "localhost,127.0.0.1",
-				DataSize.ofMegabytes(256), 1, 128, user, Duration.ofMinutes(1), Duration.ofMinutes(5), 2_000);
+				DataSize.ofMegabytes(256), 1, 128, user, Duration.ofMinutes(1), Duration.ofMinutes(5), 2_000, "");
 	}
 
 	@Test

@@ -1,16 +1,118 @@
-# Local development infrastructure. Spring Boot's Docker Compose support starts it automatically
-# when the app runs from the IDE or `./mvnw -pl app spring-boot:run`.
+# Everything in one command: the app with its web UI, Postgres, the sandbox egress proxy and Docker access.
+#
+#   docker compose up -d --build
+#
+# Then open http://localhost:8080. The first visit creates the admin account and walks through setup: a code host
+# and a model are required; Jira, Slack and pull request feedback can be skipped and added later in Settings.
+# Secrets entered there are encrypted in Postgres with a key kept in the `agentic-data` volume (or AGENTIC_SECRETS_KEY).
+#
+# Optional settings (environment or a .env file next to this one):
+#   AGENTIC_PORT          host port of the UI and API (default 8080)
+#   POSTGRES_PASSWORD     database password (set it before the first start)
+#   AGENTIC_SECRETS_KEY   base64 of 32 random bytes (`openssl rand -base64 32`); back it up with the database
+#
+# For local development of the app itself, use dev/postgres/compose.yaml (started by `./mvnw -pl app spring-boot:run`).
+name: agentic-sdlc
+
 services:
   postgres:
-    image: 'postgres:18'
+    image: postgres:18
+    restart: unless-stopped
     environment:
-      - 'POSTGRES_DB=agentic_sdlc'
-      - 'POSTGRES_USER=agentic'
-      - 'POSTGRES_PASSWORD=agentic-dev-only'
-    ports:
-      - '5432'
+      POSTGRES_DB: agentic_sdlc
+      POSTGRES_USER: agentic
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-agentic-change-me}
+    volumes:
+      - postgres-data:/var/lib/postgresql
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U agentic -d agentic_sdlc']
       interval: 5s
       timeout: 3s
-      retries: 10
+      retries: 20
+
+  # Sandboxes join the internal network `agentic-sandbox`, which has no route out. This allowlisting proxy is the only
+  # way out: package registries and api.osv.dev (dev/egress/allowed-domains.txt), nothing else.
+  egress:
+    image: ubuntu/squid:6.6-24.04_edge
+    restart: unless-stopped
+    volumes:
+      - ./dev/egress/squid.conf:/etc/squid/squid.conf:ro
+      - ./dev/egress/allowed-domains.txt:/etc/squid/allowed-domains.txt:ro
+    networks:
+      sandbox:
+        aliases: [egress]
+      default: {}
+
+  # The app starts sandbox containers through this proxy rather than holding the Docker socket itself. Docker access
+  # is still powerful: run this stack on a machine dedicated to it, or on rootless Docker.
+  docker:
+    image: tecnativa/docker-socket-proxy:v0.4.2
+    restart: unless-stopped
+    environment:
+      CONTAINERS: 1
+      IMAGES: 1
+      NETWORKS: 1
+      VOLUMES: 1
+      EXEC: 1
+      INFO: 1
+      POST: 1
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - docker-api
+
+  app:
+    build: .
+    image: agentic-sdlc:local
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      docker:
+        condition: service_started
+      egress:
+        condition: service_started
+    ports:
+      - '${AGENTIC_PORT:-8080}:8080'
+    environment:
+      SPRING_R2DBC_URL: r2dbc:postgresql://postgres:5432/agentic_sdlc
+      SPRING_R2DBC_USERNAME: agentic
+      SPRING_R2DBC_PASSWORD: ${POSTGRES_PASSWORD:-agentic-change-me}
+      SPRING_FLYWAY_URL: jdbc:postgresql://postgres:5432/agentic_sdlc
+      SPRING_FLYWAY_USER: agentic
+      SPRING_FLYWAY_PASSWORD: ${POSTGRES_PASSWORD:-agentic-change-me}
+      # Built-in sign-in instead of an OIDC provider; connectors are configured in the UI (ADR-0007).
+      AGENTIC_SECURITY_MODE: local
+      AGENTIC_SECRETS_KEY: ${AGENTIC_SECRETS_KEY:-}
+      AGENTIC_DATA_DIR: /var/lib/agentic/data
+      # A single admin approves their own runs; set to true once several people use the install.
+      AGENTIC_GATES_FORBIDSELFAPPROVAL: 'false'
+      AGENTIC_SANDBOX_DOCKERHOST: tcp://docker:2375
+      AGENTIC_SANDBOX_NETWORK: agentic-sandbox
+      AGENTIC_SANDBOX_EGRESSPROXY: http://egress:3128
+      # Sandboxes mount each run's directory from this volume, which the app sees at the workspace root.
+      AGENTIC_SANDBOX_WORKSPACEVOLUME: agentic-workspaces
+    volumes:
+      - agentic-workspaces:/var/lib/agentic/workspaces
+      - agentic-data:/var/lib/agentic/data
+    extra_hosts:
+      # Reach a model server on this machine, e.g. Ollama at http://host.docker.internal:11434
+      - host.docker.internal:host-gateway
+    networks:
+      - default
+      - docker-api
+
+volumes:
+  postgres-data: {}
+  agentic-data: {}
+  # Named explicitly: the app refers to it by name when it starts sandboxes.
+  agentic-workspaces:
+    name: agentic-workspaces
+
+networks:
+  default: {}
+  sandbox:
+    name: agentic-sandbox
+    internal: true
+  docker-api:
+    internal: true

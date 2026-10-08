@@ -62,8 +62,8 @@ public final class ConnectorCatalog {
 									Field.text("host", "Host", true, "github.com, gitlab.com, bitbucket.org, dev.azure.com "
 											+ "or your server", "github.com"),
 									Field.secret("token", "Access token", true, "GitHub: fine-grained token with "
-											+ "contents, pull requests and actions read; GitLab: api scope; Bitbucket: "
-											+ "repository access token; Azure DevOps: PAT with Code read & write"),
+											+ "Contents and Pull requests read & write, Actions read; GitLab: api scope; "
+											+ "Bitbucket: repository access token; Azure DevOps: PAT with Code read & write"),
 									Field.url("apiUrl", "API URL", false, "Only for GitHub Enterprise or self-managed "
 											+ "GitLab, e.g. https://ghe.example.com/api/v3"),
 									Field.text("organization", "Organization", false, "Azure DevOps organization, to "

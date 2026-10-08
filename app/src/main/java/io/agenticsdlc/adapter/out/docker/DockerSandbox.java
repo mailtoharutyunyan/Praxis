@@ -4,11 +4,9 @@ import com.github.dockerjava.api.DockerClient;
 import com.github.dockerjava.api.async.ResultCallback;
 import com.github.dockerjava.api.command.InspectContainerResponse;
 import com.github.dockerjava.api.exception.NotFoundException;
-import com.github.dockerjava.api.model.Bind;
 import com.github.dockerjava.api.model.Capability;
 import com.github.dockerjava.api.model.Frame;
 import com.github.dockerjava.api.model.HostConfig;
-import com.github.dockerjava.api.model.Volume;
 import io.agenticsdlc.config.AgenticProperties;
 import io.agenticsdlc.config.WorkspacePaths;
 import io.agenticsdlc.core.workspace.CommandResult;
@@ -46,6 +44,8 @@ public class DockerSandbox implements Sandbox {
 	static final String LABEL_RUN = "io.agenticsdlc.run";
 	static final String LABEL_ENVIRONMENT = "io.agenticsdlc.environment";
 	static final String LABEL_SIDECAR = "io.agenticsdlc.sidecar";
+	/** Which installation a container belongs to, so cleanup never touches another one's on a shared Docker host. */
+	static final String LABEL_WORKSPACE = "io.agenticsdlc.workspace";
 	/** Keeps the container alive and exits promptly on SIGTERM; works in any image with a POSIX shell. */
 	private static final String[] IDLE = { "sh", "-c", "trap 'exit 0' TERM; while :; do sleep 3600 & wait $!; done" };
 	private static final String RUN_WITH_TIMEOUT = "if command -v timeout >/dev/null 2>&1; "
@@ -56,6 +56,7 @@ public class DockerSandbox implements Sandbox {
 	private final DockerClient docker;
 	private final WorkspacePaths paths;
 	private final AgenticProperties.Sandbox settings;
+	private final WorkspaceMounts mounts;
 	private final URI proxy;
 	private final String user;
 
@@ -64,6 +65,7 @@ public class DockerSandbox implements Sandbox {
 		this.docker = docker;
 		this.paths = paths;
 		this.settings = settings;
+		this.mounts = new WorkspaceMounts(paths.root(), settings.workspaceVolume());
 		if (settings.network().equals("host") || settings.network().startsWith("container:")) {
 			throw new IllegalArgumentException("agentic.sandbox.network=" + settings.network()
 					+ " would share the host's or another container's network; use none or an internal network");
@@ -182,7 +184,8 @@ public class DockerSandbox implements Sandbox {
 					.withInit(true);
 			docker.createContainerCmd(sidecar.image())
 					.withName(name)
-					.withLabels(Map.of(LABEL_RUN, runId.toString(), LABEL_SIDECAR, sidecar.name()))
+					.withLabels(Map.of(LABEL_RUN, runId.toString(), LABEL_SIDECAR, sidecar.name(), LABEL_WORKSPACE,
+							mounts.identity()))
 					.withEnv(env)
 					.withAliases(sidecar.name())
 					.withHostConfig(host)
@@ -303,8 +306,7 @@ public class DockerSandbox implements Sandbox {
 				env.addAll(proxyEnvironment(proxy, settings.noProxy()));
 			}
 			spec.env().forEach((k, v) -> env.add(k + "=" + v));
-			HostConfig host = HostConfig.newHostConfig()
-					.withBinds(new Bind(repo.toString(), new Volume(Sandbox.WORKDIR)))
+			HostConfig host = mounts.mount(HostConfig.newHostConfig(), repo, Sandbox.WORKDIR, false)
 					.withCapDrop(Capability.values())
 					.withSecurityOpts(List.of("no-new-privileges"))
 					.withMemory(settings.memory().toBytes())
@@ -316,7 +318,8 @@ public class DockerSandbox implements Sandbox {
 					.withInit(true);
 			docker.createContainerCmd(spec.image())
 					.withName(name)
-					.withLabels(Map.of(LABEL_RUN, runId.toString(), LABEL_ENVIRONMENT, spec.name()))
+					.withLabels(Map.of(LABEL_RUN, runId.toString(), LABEL_ENVIRONMENT, spec.name(), LABEL_WORKSPACE,
+							mounts.identity()))
 					.withEntrypoint(IDLE)
 					.withCmd(List.of())
 					.withWorkingDir(Sandbox.WORKDIR)
@@ -479,6 +482,11 @@ public class DockerSandbox implements Sandbox {
 			Thread.sleep(20);
 		}
 		return -1;
+	}
+
+	/** How workspace directories are mounted; scanners use it too. */
+	WorkspaceMounts mounts() {
+		return mounts;
 	}
 
 	/** The non-root uid:gid sandboxes run as; scanners use it too. */

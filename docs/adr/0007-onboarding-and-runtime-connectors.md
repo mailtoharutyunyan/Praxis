@@ -23,6 +23,10 @@ Every integration (code host tokens, model keys, Jira, webhook secrets) was conf
   - The resource server validates these tokens like OIDC ones (issuer, audience, expiry), so roles and every API rule are unchanged.
   - The first admin is created during setup. `oidc` stays the production default.
 - **Administration.** A new `admin` role manages connectors; the first local user has every role.
+- **Packaging.** The root `compose.yaml` runs the app (with the UI), Postgres, the egress proxy and a Docker socket proxy.
+  - The app reaches Docker only through the socket proxy (`tcp://docker:2375`) on an internal network.
+  - The workspace is a named volume. Sandboxes and scanners mount their run's directory from it as a volume subpath (Engine API 1.45+), because a path inside the app container means nothing to the Docker daemon.
+  - Sandbox containers carry the workspace identity as a label, so cleanup never removes another installation's containers on a shared Docker host.
 
 ## Consequences
 - Positive:
@@ -32,3 +36,5 @@ Every integration (code host tokens, model keys, Jira, webhook secrets) was conf
 - Negative:
   - Secrets now also live in the database (encrypted), so the key must be protected and backed up with it.
   - Local sign-in is a small built-in identity store; production should keep using OIDC.
+  - Volume subpaths need Docker Engine 26 or later.
+- Follow-ups: user management for local sign-in (more accounts, roles, password change).

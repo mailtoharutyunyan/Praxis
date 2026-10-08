@@ -1,3 +1,4 @@
+import type { Connector, ConnectorUpdate, TestResult } from "./setup";
 import type { FactStatus, Gate, GateDecision, Problem, RepoFact, RiskLevel, Run, RunEvent, RunPage, RunState, ScmKind } from "./types";
 
 export class ApiError extends Error {
@@ -98,5 +99,21 @@ export class Api {
 
   raiseRisk(id: string, risk: RiskLevel, reason: string): Promise<Run> {
     return this.request(`/runs/${encodeURIComponent(id)}/risk`, { method: "POST", body: JSON.stringify({ risk, reason }) });
+  }
+
+  connectors(): Promise<Connector[]> {
+    return this.request("/connectors");
+  }
+
+  saveConnector(id: string, update: ConnectorUpdate): Promise<Connector> {
+    return this.request(`/connectors/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(update) });
+  }
+
+  testConnector(id: string, update: ConnectorUpdate): Promise<TestResult> {
+    return this.request(`/connectors/${encodeURIComponent(id)}/test`, { method: "POST", body: JSON.stringify(update) });
+  }
+
+  skipConnector(id: string): Promise<Connector> {
+    return this.request(`/connectors/${encodeURIComponent(id)}/skip`, { method: "POST" });
   }
 }

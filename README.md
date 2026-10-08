@@ -4,6 +4,24 @@ Turns a task (a prompt, a Jira ticket, or another source) into a reviewed pull r
 
 > Status: **M0–M8 complete**: intake, agent pipeline, sandbox, publishing, Jira, evaluation and web UI. See [the roadmap](#roadmap).
 
+## Quick start: everything with Docker Compose
+```bash
+docker compose up -d --build
+```
+Then open http://localhost:8080. This one command builds the app and its web UI and starts them with Postgres, the sandbox egress proxy and a Docker API proxy for sandboxes ([`compose.yaml`](compose.yaml)).
+
+On the first visit the UI walks you through setup:
+1. **Admin account.** Create the first user. It has every role, and it is the account that configures connectors.
+2. **Required connectors.** Until these are saved, the UI shows only the setup wizard.
+   - **Application:** its public URL, used for links to runs.
+   - **Code hosts:** GitHub, GitLab, Bitbucket or Azure DevOps, each with an access token. Each host you add is allowed for tasks.
+   - **Model:** Anthropic, OpenAI, Azure OpenAI, Bedrock, Gemini or Ollama, used for every agent role. For Ollama on the same machine, use `http://host.docker.internal:11434`.
+3. **Optional connectors.** Save or **Skip** each one, and add skipped ones later under **Settings**: Jira, Slack, and pull request feedback (GitHub and GitLab webhooks).
+
+Each step has **Test connection**. Changes apply without a restart. Secrets are write-only in the UI, and they are encrypted (AES-256-GCM) in Postgres with a key from `AGENTIC_SECRETS_KEY` or, if that is unset, a key generated in the `agentic-data` volume. Back the key up together with the database. Set `POSTGRES_PASSWORD` and `AGENTIC_SECRETS_KEY` (`openssl rand -base64 32`) in a `.env` file before the first start; `AGENTIC_PORT` changes the port.
+
+Stop with `docker compose down`. Your data stays in the volumes until you add `-v`.
+
 ## Stack
 - Java 25 (LTS), Spring Boot 4.1.1, Spring WebFlux, Project Reactor
 - Spring AI 2.0.1. Providers: Anthropic Claude, OpenAI, Bedrock / Azure / Vertex, Ollama
@@ -48,7 +66,7 @@ Maven resolves from Maven Central through the project's own [`.mvn/settings.xml`
 ```bash
 ./mvnw verify                      # unit + Testcontainers integration tests, ArchUnit, coverage gate
 ./mvnw install -DskipTests         # once, and after changing core/
-./mvnw -pl app spring-boot:run     # starts Postgres from compose.yaml automatically (left running between restarts)
+./mvnw -pl app spring-boot:run     # starts Postgres from dev/postgres/compose.yaml automatically (left running)
 curl localhost:8080/actuator/health
 ```
 
@@ -145,12 +163,12 @@ docker build -t agentic-sdlc .
 ```
 What the container needs:
 - **Postgres:** `SPRING_R2DBC_URL` (plus username and password) and `SPRING_FLYWAY_URL` (plus user and password).
-- **An OIDC issuer and an audience:**
+- **Sign-in:** `AGENTIC_SECURITY_MODE=local` for built-in accounts (see [Web UI](#web-ui)), or an OIDC issuer and an audience:
   - `SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_ISSUER_URI`.
   - `AGENTIC_JWT_AUDIENCE`, default `agentic-sdlc`. Access tokens must carry this value in `aud`; in Keycloak, add an audience mapper.
 - **Docker access for sandboxes:** `DOCKER_HOST`, or the Docker socket mounted with `--group-add <docker gid>`.
   - Access to the Docker API is root on that host. Use a dedicated sandbox host, or rootless Docker.
-  - Containers are bind-mounted from the Docker host, so mount the workspace volume at the same path on the host and in the container. The default path is `/var/lib/agentic/workspaces`, and it must be owned by uid 10001.
+  - Sandboxes must see the run's files. Either mount a Docker volume at the workspace root and name it in `AGENTIC_SANDBOX_WORKSPACEVOLUME`, so sandboxes mount their run's directory from it as a volume subpath (Docker Engine 26+; this is what `compose.yaml` does), or bind-mount a host directory at the same path on the host and in the container. The default path is `/var/lib/agentic/workspaces`, and it must be owned by uid 10001.
 - **Model and SCM credentials** as environment variables, such as `ANTHROPIC_API_KEY` and `agentic.scm.tokens`.
 
 Several instances can share one database:
@@ -293,6 +311,19 @@ agentic:
    ```
 4. Start the app with `--agentic.jira.deployment=data-center --agentic.jira.base-url=http://localhost:8090` and the token and secret in `AGENTIC_JIRA_APITOKEN` and `AGENTIC_JIRA_WEBHOOKSECRET`, then add the `agentic` label to an issue.
 
+## Slack
+Start runs from Slack with a slash command, and follow them in a thread:
+```
+/agentic https://github.com/acme/shop.git Add a /health endpoint with a test
+/agentic Add a /health endpoint with a test        # uses the connector's default repository
+```
+1. Create a Slack app with the bot scopes `chat:write` and `commands`, and install it in your workspace.
+2. Add the slash command `/agentic` with the request URL `https://<public URL>/api/v1/webhooks/slack/commands`. Settings → Slack shows the exact URL.
+3. In Settings → Slack, enter the bot token (`xoxb-…`), the signing secret and, optionally, a default repository.
+4. Invite the app to the channels where it is used.
+
+Each request is verified with the signing secret (Slack's `v0` HMAC over timestamp and body), and requests older than five minutes are rejected. The app posts the request in the channel and runs the task from that thread. Progress (gates, the pull request, the outcome) is posted as thread replies. Slack text is untrusted, like a ticket, so it always passes the SPEC gate, and the echoed request is escaped so it cannot mention `@channel`.
+
 ## Web UI
 The UI is a React app served by the backend at `/`:
 - **Runs list:** filtered to "Needs me", in progress, PR open and finished.
@@ -302,8 +333,11 @@ The UI is a React app served by the backend at `/`:
 What you see depends on your role. Links to a run look like `/#/runs/<id>`, so set `agentic.jira.run-link-base` to `https://<host>/#/runs/`.
 
 Sign-in:
-- **Production:** OIDC authorization code with PKCE (`agentic.ui.auth-mode=oidc`, plus `issuer` and `client-id` for a public client).
+- **Production with an identity provider:** OIDC authorization code with PKCE (`agentic.ui.auth-mode=oidc`, plus `issuer` and `client-id` for a public client).
+- **Built-in** (`AGENTIC_SECURITY_MODE=local`, used by `compose.yaml`): usernames and BCrypt-hashed passwords in Postgres. Five failed attempts lock a username for a minute. The app signs RS256 tokens with a key stored encrypted in the database, so every instance accepts them.
 - **Local profile:** paste a token from `scripts/dev-token.sh`.
+
+**Setup and Settings.** Until a code host and a model are configured, signed-in admins see the setup wizard and everyone else a notice. Admins manage connectors under **Settings**. Forms are generated from the connector catalog (`GET /api/v1/connectors`), so a new connector needs no UI change.
 
 Security: the backend sends a strict Content-Security-Policy, and model output is rendered as sanitized Markdown.
 ```bash
@@ -364,6 +398,13 @@ All endpoints need a bearer JWT from your OIDC provider (`spring.security.oauth2
 | `POST /api/v1/runs/{id}/risk` | approver | Raise risk, which adds gates and never removes them. |
 | `POST /api/v1/runs/{id}/cancel` | operator | Cancel a live run. |
 | `POST /api/v1/runs/{id}/resume` | operator | Continue a run escalated to `NEEDS_HUMAN`. |
+| `GET /api/v1/setup` | public | Setup status: each step done, skipped or pending; no secrets. |
+| `POST /api/v1/setup/admin` | public, once | Create the first admin (built-in sign-in only); returns a token. |
+| `POST /api/v1/auth/login` | public | Built-in sign-in: `{username, password}` → `{token, expiresAt, roles}`. |
+| `GET /api/v1/connectors` | admin | Connector forms, settings and which secrets are set (never their values). |
+| `PUT /api/v1/connectors/{id}` | admin | Save `{config, secrets}`; an empty secret keeps the stored one. |
+| `POST /api/v1/connectors/{id}/test` | admin | Check the given settings against the service without saving. |
+| `POST /api/v1/connectors/{id}/skip` | admin | Skip an optional connector. |
 
 Operations: `/actuator/health/{liveness,readiness}` and `/actuator/prometheus`, served on management port 8081 in the `prod` profile. Metrics: `agentic.stage.duration`, `agentic.run.transitions`, `agentic.stage.failures`, `agentic.step.abandoned`.
 
@@ -380,3 +421,4 @@ Operations: `/actuator/health/{liveness,readiness}` and `/actuator/prometheus`, 
 | **M7** ✅ | Evaluation harness built from historical tickets |
 | **M8** ✅ | Web UI |
 | **M9** ✅ | MCP server for AI clients |
+| **M10** ✅ | One-command Docker Compose install, setup wizard, runtime connectors (git, models, Jira, Slack, PR feedback), built-in sign-in |

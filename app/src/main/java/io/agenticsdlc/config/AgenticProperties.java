@@ -109,6 +109,9 @@ public record AgenticProperties(@Valid @NotNull Worker worker, @Valid @NotNull L
 	 * @param user {@code uid:gid} to run as; empty uses the owner of the workspace root so files stay writable. Never
 	 *        root: the workspace is bind-mounted from the host
 	 * @param maxOutputChars per command; longer output keeps its head and tail
+	 * @param workspaceVolume when this app runs in a container: the Docker volume mounted at {@code workspaceRoot}.
+	 *        Sandboxes then mount the run's directory from that volume (a volume subpath, Docker Engine 26+) instead
+	 *        of a host path the Docker daemon cannot see; empty bind-mounts host paths
 	 */
 	public record Sandbox(@DefaultValue("false") boolean enabled, @NotNull java.nio.file.Path workspaceRoot,
 			@DefaultValue("") String dockerHost, @DefaultValue("none") @NotBlank String network,
@@ -117,7 +120,7 @@ public record AgenticProperties(@Valid @NotNull Worker worker, @Valid @NotNull L
 			@DefaultValue("2") @DecimalMin("0.1") double cpus, @DefaultValue("1024") @Min(64) long pidsLimit,
 			@DefaultValue("") String user, @DefaultValue("20m") @NotNull Duration commandTimeout,
 			@DefaultValue("10m") @NotNull Duration imagePullTimeout,
-			@DefaultValue("32000") @Min(1000) int maxOutputChars) {
+			@DefaultValue("32000") @Min(1000) int maxOutputChars, @DefaultValue("") String workspaceVolume) {
 	}
 
 	/**

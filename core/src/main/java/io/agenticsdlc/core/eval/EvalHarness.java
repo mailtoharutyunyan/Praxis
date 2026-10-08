@@ -26,7 +26,8 @@ import reactor.core.publisher.Mono;
 /**
  * Replays historical tasks through the real pipeline (same stages, models, sandbox and limits as production) and
  * grades the outcome with hidden tests. Gates before publishing are approved automatically; the run is stopped at the
- * PUBLISH gate and graded in its sandbox, so nothing is ever pushed. Runs are cancelled afterwards for cleanup.
+ * PUBLISH gate and graded in its sandbox, so nothing is ever pushed. Runs are cancelled and their sandboxes removed
+ * afterwards.
  */
 public final class EvalHarness {
 
@@ -82,6 +83,8 @@ public final class EvalHarness {
 								List.of("trial timed out after " + trialTimeout), started)))
 						.flatMap(result -> commands.cancel(runId, "evaluation finished", APPROVER)
 								.onErrorResume(e -> Mono.empty())
+								// Trials can run back to back; free their containers now rather than at the next cleanup.
+								.then(sandbox.destroy(runId).onErrorResume(e -> Mono.empty()))
 								.thenReturn(result)));
 	}
 

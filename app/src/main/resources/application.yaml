@@ -44,7 +44,7 @@ spring:
   docker:
     compose:
       # Dev-only: the module is excluded from the packaged jar. Path is relative to the app/ module.
-      file: ../compose.yaml
+      file: ../dev/postgres/compose.yaml
       lifecycle-management: start-only
 
 server:

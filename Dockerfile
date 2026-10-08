@@ -4,7 +4,8 @@
 #   docker build -t agentic-sdlc .
 #
 # Tests are not run here (they need Docker and Testcontainers); CI runs `./mvnw verify` before building the image.
-# See "Deployment" in README.md for the Docker access and workspace volume the container needs.
+# See "Deployment" in README.md for the Docker access and workspace volume the container needs, or run the whole
+# stack with `docker compose up -d --build` (compose.yaml).
 
 FROM node:24.21.0-alpine AS ui
 WORKDIR /src/ui
@@ -28,7 +29,7 @@ FROM eclipse-temurin:25.0.4_7-jre-noble
 # A fixed non-root uid: it owns the workspace volume, and sandboxes run as the workspace owner (never root).
 RUN groupadd --system --gid 10001 agentic \
     && useradd --system --uid 10001 --gid agentic --home-dir /home/agentic --create-home agentic \
-    && mkdir -p /var/lib/agentic/workspaces \
+    && mkdir -p /var/lib/agentic/workspaces /var/lib/agentic/data \
     && chown -R agentic:agentic /var/lib/agentic
 WORKDIR /app
 COPY --from=build /extracted/dependencies/ ./

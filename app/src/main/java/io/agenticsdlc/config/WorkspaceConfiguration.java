@@ -88,7 +88,7 @@ class WorkspaceConfiguration {
 	}
 
 	@Bean
-	SandboxJanitor sandboxJanitor(DockerClient docker, RunStore store, Sandbox sandbox, RepositoryCheckout checkout) {
+	SandboxJanitor sandboxJanitor(DockerClient docker, RunStore store, DockerSandbox sandbox, RepositoryCheckout checkout) {
 		return new SandboxJanitor(docker, store, sandbox, checkout);
 	}
 

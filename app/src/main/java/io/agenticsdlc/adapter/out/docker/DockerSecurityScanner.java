@@ -4,12 +4,10 @@ import com.github.dockerjava.api.DockerClient;
 import com.github.dockerjava.api.async.ResultCallback;
 import com.github.dockerjava.api.command.WaitContainerResultCallback;
 import com.github.dockerjava.api.exception.NotFoundException;
-import com.github.dockerjava.api.model.Bind;
 import com.github.dockerjava.api.model.Capability;
 import com.github.dockerjava.api.model.Frame;
 import com.github.dockerjava.api.model.HostConfig;
 import com.github.dockerjava.api.model.StreamType;
-import com.github.dockerjava.api.model.Volume;
 import io.agenticsdlc.config.AgenticProperties;
 import io.agenticsdlc.config.WorkspacePaths;
 import io.agenticsdlc.core.workspace.SecurityScanner;
@@ -154,8 +152,7 @@ public class DockerSecurityScanner implements SecurityScanner {
 	private String run(UUID runId, String image, List<String> command, String network, List<String> env)
 			throws InterruptedException {
 		sandbox.pullIfMissing(image);
-		HostConfig host = HostConfig.newHostConfig()
-				.withBinds(new Bind(paths.repo(runId).toString(), new Volume(MOUNT), com.github.dockerjava.api.model.AccessMode.ro))
+		HostConfig host = sandbox.mounts().mount(HostConfig.newHostConfig(), paths.repo(runId), MOUNT, true)
 				.withCapDrop(Capability.values())
 				.withSecurityOpts(List.of("no-new-privileges"))
 				.withMemory(1024L * 1024 * 1024)
