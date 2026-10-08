@@ -21,7 +21,25 @@ public record AgenticProperties(@Valid @NotNull Worker worker, @Valid @NotNull L
 		@Valid @NotNull StubStages stubStages, @Valid @NotNull Sandbox sandbox, @Valid @NotNull Scm scm,
 		@Valid @NotNull Models models, @Valid @NotNull Agent agent, @Valid @NotNull Jira jira, @Valid @NotNull Ui ui,
 		@Valid @NotNull @DefaultValue Mcp mcp, @Valid @NotNull @DefaultValue Scan scan,
-		@Valid @NotNull @DefaultValue Memory memory) {
+		@Valid @NotNull @DefaultValue Memory memory, @Valid @NotNull @DefaultValue RateLimit rateLimit,
+		@Valid @NotNull @DefaultValue Retention retention) {
+
+	/**
+	 * Requests per minute and client address, per instance (token buckets). Sign-in and first-run setup get a tight
+	 * limit against password guessing; the rest a generous one against runaway clients.
+	 */
+	public record RateLimit(@DefaultValue("true") boolean enabled, @DefaultValue("10") @Min(1) int authPerMinute,
+			@DefaultValue("1200") @Min(1) int apiPerMinute, @DefaultValue("600") @Min(1) int webhookPerMinute) {
+	}
+
+	/**
+	 * @param finishedRuns finished runs (done, failed, cancelled) older than this are deleted with their events;
+	 *        zero keeps them forever
+	 * @param revokedTokens revoked and expired API tokens are deleted after this
+	 */
+	public record Retention(@DefaultValue("180d") @NotNull Duration finishedRuns,
+			@DefaultValue("30d") @NotNull Duration revokedTokens, @DefaultValue("6h") @NotNull Duration interval) {
+	}
 
 	/**
 	 * @param enabled run the background worker on this instance (disable for API-only replicas)
@@ -63,13 +81,18 @@ public record AgenticProperties(@Valid @NotNull Worker worker, @Valid @NotNull L
 	 *        {@code dataDir} (local installs only)
 	 * @param dataDir where generated keys live; empty for {@code ~/.agentic-sdlc/data}
 	 * @param localTokenTtl how long a local sign-in lasts
+	 * @param previousSecretsKeys keys that encrypted secrets before {@code secretsKey}; secrets are re-encrypted with
+	 *        the current key on startup, after which the old keys can be removed
+	 * @param setupCode the one-time code that creates the first local admin; empty generates one and logs it
+	 * @param apiTokenMaxTtl the longest lifetime a personal API token may have
 	 */
 	public record Security(@DefaultValue("roles") @NotBlank String rolesClaim,
 			@DefaultValue({}) List<String> corsAllowedOrigins,
 			@DefaultValue("oidc") @jakarta.validation.constraints.Pattern(regexp = "oidc|local") String mode,
 			@DefaultValue("") String secretsKey,
 			@DefaultValue("") String dataDir,
-			@DefaultValue("12h") @NotNull Duration localTokenTtl) {
+			@DefaultValue("12h") @NotNull Duration localTokenTtl, @DefaultValue({}) List<String> previousSecretsKeys,
+			@DefaultValue("") String setupCode, @DefaultValue("365d") @NotNull Duration apiTokenMaxTtl) {
 
 		public java.nio.file.Path dataPath() {
 			return dataDir.isBlank() ? java.nio.file.Path.of(System.getProperty("user.home"), ".agentic-sdlc", "data")

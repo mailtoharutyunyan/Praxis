@@ -90,6 +90,9 @@ class OnboardingTest {
 	@Autowired
 	RunQueries queries;
 
+	@Autowired
+	io.agenticsdlc.config.identity.LocalAuth localAuth;
+
 	private WebTestClient client() {
 		return WebTestClient.bindToApplicationContext(context).configureClient().responseTimeout(Duration.ofSeconds(20))
 				.build();
@@ -106,6 +109,7 @@ class OnboardingTest {
 				.returnResult().getResponseBody();
 		assertThat(status.get("authMode")).isEqualTo("local");
 		assertThat(status.get("complete")).isEqualTo(false);
+		assertThat(status.get("setupCodeRequired")).isEqualTo(true);
 		assertThat(states(status)).containsEntry("admin", "PENDING").containsEntry("git", "PENDING")
 				.containsEntry("jira", "PENDING");
 		client().get().uri("/api/v1/connectors").exchange().expectStatus().isUnauthorized();
@@ -116,15 +120,21 @@ class OnboardingTest {
 	@Test
 	@Order(2)
 	void theFirstAdminIsCreatedOnceAndSignsIn() {
+		String code = localAuth.setupCode().block();
 		client().post().uri("/api/v1/setup/admin").contentType(MediaType.APPLICATION_JSON)
-				.bodyValue(Map.of("username", "admin", "password", "short")).exchange().expectStatus().isBadRequest();
+				.bodyValue(Map.of("setupCode", code, "username", "admin", "password", "short")).exchange().expectStatus()
+				.isBadRequest();
+		// Without the code from the log, nobody can claim the fresh install.
+		client().post().uri("/api/v1/setup/admin").contentType(MediaType.APPLICATION_JSON)
+				.bodyValue(Map.of("setupCode", "AAAA-BBBB-CCCC", "username", "intruder", "password", "correct horse battery"))
+				.exchange().expectStatus().isBadRequest();
 		Map<?, ?> created = client().post().uri("/api/v1/setup/admin").contentType(MediaType.APPLICATION_JSON)
-				.bodyValue(Map.of("username", "Admin", "password", "correct horse battery")).exchange().expectStatus()
-				.isOk().expectBody(Map.class).returnResult().getResponseBody();
+				.bodyValue(Map.of("setupCode", code.toLowerCase(), "username", "Admin", "password", "correct horse battery"))
+				.exchange().expectStatus().isOk().expectBody(Map.class).returnResult().getResponseBody();
 		assertThat(created.get("roles")).isEqualTo(List.of("viewer", "operator", "approver", "admin"));
 		client().post().uri("/api/v1/setup/admin").contentType(MediaType.APPLICATION_JSON)
-				.bodyValue(Map.of("username", "other", "password", "correct horse battery")).exchange().expectStatus()
-				.isEqualTo(409);
+				.bodyValue(Map.of("setupCode", code, "username", "other", "password", "correct horse battery")).exchange()
+				.expectStatus().isEqualTo(409);
 
 		client().post().uri("/api/v1/auth/login").contentType(MediaType.APPLICATION_JSON)
 				.bodyValue(Map.of("username", "admin", "password", "wrong password!")).exchange().expectStatus()
@@ -162,10 +172,17 @@ class OnboardingTest {
 		assertThat(settings.scmToken("github.com")).contains("ghp_example_token_value");
 
 		admin().post().uri("/api/v1/connectors/models/skip").exchange().expectStatus().isBadRequest();
+		// A model outside the price list needs prices, or the cost limit could not apply.
 		admin().put().uri("/api/v1/connectors/models").contentType(MediaType.APPLICATION_JSON)
 				.bodyValue(Map.of("config", Map.of("provider", "ollama", "model", "qwen3", "baseUrl",
 						"http://ollama:11434"), "secrets", Map.of()))
+				.exchange().expectStatus().isBadRequest();
+		admin().put().uri("/api/v1/connectors/models").contentType(MediaType.APPLICATION_JSON)
+				.bodyValue(Map.of("config", Map.of("provider", "ollama", "model", "qwen3", "baseUrl",
+						"http://ollama:11434", "inputPrice", "0", "outputPrice", "0", "triageModel", "qwen3:4b"),
+						"secrets", Map.of()))
 				.exchange().expectStatus().isOk();
+		assertThat(settings.model().orElseThrow().roleModels()).containsEntry("triage", "qwen3:4b");
 		admin().put().uri("/api/v1/connectors/app").contentType(MediaType.APPLICATION_JSON)
 				.bodyValue(Map.of("config", Map.of("publicUrl", "http://localhost:8080"), "secrets", Map.of()))
 				.exchange().expectStatus().isOk();
@@ -179,7 +196,8 @@ class OnboardingTest {
 
 		admin().put().uri("/api/v1/connectors/slack").contentType(MediaType.APPLICATION_JSON)
 				.bodyValue(Map.of("config", Map.of("defaultKind", "GITHUB", "defaultRepository",
-						"https://github.com/acme/shop.git"), "secrets", Map.of("botToken", "xoxb-test", "signingSecret",
+						"https://github.com/acme/shop.git", "allowedChannels", "C0123ABC"),
+						"secrets", Map.of("botToken", "xoxb-test", "signingSecret",
 								SIGNING_SECRET)))
 				.exchange().expectStatus().isOk();
 		status = client().get().uri("/api/v1/setup").exchange().expectStatus().isOk().expectBody(Map.class)
@@ -202,6 +220,14 @@ class OnboardingTest {
 				.header("X-Slack-Request-Timestamp", String.valueOf(now - 600))
 				.header("X-Slack-Signature", sign(now - 600, form)).bodyValue(form).exchange().expectStatus()
 				.isUnauthorized();
+
+		// A channel nobody allowed is refused, signed or not.
+		String elsewhere = form.replace("C0123ABC", "C9999XYZ");
+		Map<?, ?> refused = client().post().uri("/api/v1/webhooks/slack/commands")
+				.contentType(MediaType.APPLICATION_FORM_URLENCODED).header("X-Slack-Request-Timestamp", String.valueOf(now))
+				.header("X-Slack-Signature", sign(now, elsewhere)).bodyValue(elsewhere).exchange().expectStatus().isOk()
+				.expectBody(Map.class).returnResult().getResponseBody();
+		assertThat((String) refused.get("text")).contains("not allowed");
 
 		Map<?, ?> reply = client().post().uri("/api/v1/webhooks/slack/commands")
 				.contentType(MediaType.APPLICATION_FORM_URLENCODED).header("X-Slack-Request-Timestamp", String.valueOf(now))

@@ -68,8 +68,8 @@ public final class ConnectorCatalog {
 											+ "GitLab, e.g. https://ghe.example.com/api/v3"),
 									Field.text("organization", "Organization", false, "Azure DevOps organization, to "
 											+ "test the token", null))))),
-			new Definition(MODELS, "AI model", "The model provider agents use for every role (roles can still be "
-					+ "tuned in configuration).", true, true, List.of(
+			new Definition(MODELS, "AI model", "The model provider agents use. One model serves every role unless "
+					+ "you name another for planning, review or triage.", true, true, List.of(
 							Field.select("provider", "Provider", List.of("anthropic", "openai", "azure-openai",
 									"bedrock", "google-genai", "ollama"), "anthropic", null),
 							Field.text("model", "Model", true, "e.g. claude-opus-5-5, gpt-5, llama3.3", "claude-opus-5-5"),
@@ -77,7 +77,17 @@ public final class ConnectorCatalog {
 									+ "AWS credentials from the environment"),
 							Field.url("baseUrl", "Base URL", false, "Ollama, Azure OpenAI endpoint or a gateway"),
 							Field.text("region", "AWS region", false, "Bedrock only", null),
-							Field.text("deployment", "Deployment", false, "Azure OpenAI only", null))),
+							Field.text("deployment", "Deployment", false, "Azure OpenAI only", null),
+							Field.text("inputPrice", "Input price", false, "USD per million input tokens, for the "
+									+ "cost limit. Needed unless the model is in the built-in price list; 0 for a free "
+									+ "local model", null),
+							Field.text("outputPrice", "Output price", false, "USD per million output tokens", null),
+							Field.text("plannerModel", "Planning model", false, "Writes the specification; empty "
+									+ "uses the model above", null),
+							Field.text("reviewerModel", "Review model", false, "Reviews the change; empty uses the "
+									+ "model above", null),
+							Field.text("triageModel", "Triage model", false, "Rates the risk; a small fast model "
+									+ "is enough. Empty uses the model above", null))),
 			new Definition(JIRA, "Jira", "Start runs from Jira issues labelled for the agent, and post progress "
 					+ "back as comments.", false, true, List.of(
 							Field.select("deployment", "Deployment", List.of("cloud", "data-center"), "cloud", null),
@@ -95,6 +105,10 @@ public final class ConnectorCatalog {
 											Field.select("kind", "Provider", SCM_KINDS, "GITHUB", null),
 											Field.url("cloneUrl", "Repository clone URL", true, null),
 											Field.text("baseBranch", "Base branch", false, "Default branch if empty",
+													null),
+											Field.text("companions", "Companion repositories", false, "Other "
+													+ "repositories these issues change too, e.g. API consumers: "
+													+ "clone URLs, comma-separated; each gets its own pull request",
 													null))))),
 			new Definition(SLACK, "Slack", "Start runs with the /agentic slash command and follow them in a thread.",
 					false, true, List.of(
@@ -103,7 +117,11 @@ public final class ConnectorCatalog {
 									+ "Information page; requests to /api/v1/webhooks/slack/commands are verified with it"),
 							Field.select("defaultKind", "Default repository provider", SCM_KINDS, "GITHUB", null),
 							Field.url("defaultRepository", "Default repository", false, "Used when the command names "
-									+ "no repository, e.g. https://github.com/acme/shop.git"))),
+									+ "no repository, e.g. https://github.com/acme/shop.git"),
+							Field.text("allowedChannels", "Allowed channels", false, "Channel IDs where /agentic may "
+									+ "start runs, comma-separated (e.g. C0123ABCD). Set channels, users or both", null),
+							Field.text("allowedUsers", "Allowed users", false, "Slack user IDs who may start runs, "
+									+ "comma-separated (e.g. U0123ABCD)", null))),
 			new Definition(WEBHOOKS, "Pull request feedback", "Let reviewers ask for changes by commenting on the "
 					+ "pull request, and fix failed CI automatically.", false, false, List.of(
 							Field.text("mention", "Mention", true, "How reviewers address the bot", "@agentic-sdlc"),

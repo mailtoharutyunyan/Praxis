@@ -13,6 +13,15 @@ public interface ModelOverride {
 
 	Optional<Choice> current();
 
-	record Choice(AgenticProperties.Provider provider, String model) {
+	/**
+	 * @param roleModels a different model for some roles ({@code planner}, {@code reviewer}, {@code triage})
+	 * @param pricing applies to every model of the choice; null to look each up in the price list
+	 */
+	record Choice(AgenticProperties.Provider provider, String model, java.util.Map<String, String> roleModels,
+			AgenticProperties.Pricing pricing) {
+
+		public Choice(AgenticProperties.Provider provider, String model) {
+			this(provider, model, java.util.Map.of(), null);
+		}
 	}
 }

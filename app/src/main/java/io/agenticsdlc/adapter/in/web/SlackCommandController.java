@@ -33,7 +33,8 @@ import reactor.core.publisher.Mono;
 
 /**
  * The {@code /agentic} Slack slash command: {@code /agentic [repository URL] <what to do>}. Requests are verified
- * with the app's signing secret (v0 HMAC over timestamp and body, at most five minutes old). The run gets a thread in
+ * with the app's signing secret (v0 HMAC over timestamp and body, at most five minutes old) and must come from an
+ * allowed channel or user. The run gets a thread in
  * the channel, and progress is posted there. Slack text is untrusted, like any ticket.
  */
 @RestController
@@ -78,6 +79,10 @@ class SlackCommandController {
 		}
 		Map<String, String> form = form(new String(raw, StandardCharsets.UTF_8));
 		String channel = form.getOrDefault("channel_id", "");
+		if (!active.settings().allows(channel, form.getOrDefault("user_id", ""))) {
+			log.info("Slack command refused: channel {} and user {} are not allowed", channel, form.get("user_id"));
+			return reply("This channel and user are not allowed to start runs. An admin can allow them in Settings → Slack.");
+		}
 		String text = form.getOrDefault("text", "").strip();
 		Request request = parse(text, active);
 		if (request == null) {

@@ -49,11 +49,22 @@ public final class ConnectorSettings {
 	public record GitHost(String kind, String host, String token, String apiUrl, String organization) {
 	}
 
+	/**
+	 * @param inputPrice USD per million tokens; null when not given (the built-in price list applies)
+	 * @param roleModels model per role ({@code planner}, {@code reviewer}, {@code triage}) where it differs
+	 */
 	public record ModelChoice(String provider, String model, String apiKey, String baseUrl, String region,
-			String deployment) {
+			String deployment, java.math.BigDecimal inputPrice, java.math.BigDecimal outputPrice,
+			Map<String, String> roleModels) {
 	}
 
-	public record SlackChoice(String botToken, String signingSecret, String defaultKind, String defaultRepository) {
+	/** Empty allow lists match nobody: a command must come from an allowed channel or an allowed user. */
+	public record SlackChoice(String botToken, String signingSecret, String defaultKind, String defaultRepository,
+			Set<String> allowedChannels, Set<String> allowedUsers) {
+
+		public boolean allows(String channel, String user) {
+			return allowedChannels.contains(channel) || allowedUsers.contains(user);
+		}
 	}
 
 	public record FeedbackChoice(String mention, String githubSecret, String gitlabToken) {
@@ -174,6 +185,13 @@ public final class ConnectorSettings {
 				}
 			}
 		}
+		if (id.equals(ConnectorCatalog.MODELS)) {
+			modelProblems(plain, problems);
+		}
+		if (id.equals(ConnectorCatalog.SLACK) && String.valueOf(plain.getOrDefault("allowedChannels", "")).isBlank()
+				&& String.valueOf(plain.getOrDefault("allowedUsers", "")).isBlank()) {
+			problems.add("set the allowed channels or users, or anyone in the workspace could start runs");
+		}
 		if (!problems.isEmpty()) {
 			return Mono.error(new IllegalArgumentException(String.join("; ", problems)));
 		}
@@ -181,6 +199,33 @@ public final class ConnectorSettings {
 		return store.save(new StoredConnector(id, CONFIGURED, plain, sealed, clock.instant(), actor))
 				.then(refresh())
 				.then(Mono.fromSupplier(() -> get(id).orElseThrow()));
+	}
+
+	/** Prices must be numbers, and every model used needs one unless the built-in price list has it. */
+	private void modelProblems(Map<String, Object> plain, List<String> problems) {
+		boolean priced = true;
+		for (String field : List.of("inputPrice", "outputPrice")) {
+			String text = String.valueOf(plain.getOrDefault(field, ""));
+			if (text.isEmpty()) {
+				priced = false;
+			}
+			else if (!text.matches("\\d{1,6}(\\.\\d{1,6})?")) {
+				problems.add(field + " must be a number of US dollars, e.g. 3 or 0.25");
+			}
+		}
+		Set<String> known = properties.models().pricing().keySet();
+		List<String> models = new ArrayList<>();
+		for (String field : List.of("model", "plannerModel", "reviewerModel", "triageModel")) {
+			String model = String.valueOf(plain.getOrDefault(field, ""));
+			if (!model.isEmpty()) {
+				models.add(model);
+			}
+		}
+		List<String> unpriced = models.stream().filter(m -> !known.contains(m)).distinct().toList();
+		if (!priced && !unpriced.isEmpty()) {
+			problems.add("set the input and output prices (0 for a free local model): the cost limit cannot price "
+					+ String.join(", ", unpriced));
+		}
 	}
 
 	private static void keepOrSet(String key, Field field, Map<String, String> given, Map<String, String> stored,
@@ -255,13 +300,37 @@ public final class ConnectorSettings {
 	}
 
 	public Optional<ModelChoice> model() {
-		return configured(ConnectorCatalog.MODELS).map(c -> new ModelChoice(c.text("provider"), c.text("model"),
-				c.secret("apiKey"), c.text("baseUrl"), c.text("region"), c.text("deployment")));
+		return configured(ConnectorCatalog.MODELS).map(c -> {
+			Map<String, String> roles = new LinkedHashMap<>();
+			for (String role : List.of("planner", "reviewer", "triage")) {
+				if (!c.text(role + "Model").isEmpty()) {
+					roles.put(role, c.text(role + "Model"));
+				}
+			}
+			return new ModelChoice(c.text("provider"), c.text("model"), c.secret("apiKey"), c.text("baseUrl"),
+					c.text("region"), c.text("deployment"), price(c.text("inputPrice")), price(c.text("outputPrice")),
+					Map.copyOf(roles));
+		});
+	}
+
+	private static java.math.BigDecimal price(String text) {
+		return text.isEmpty() ? null : new java.math.BigDecimal(text);
 	}
 
 	public Optional<SlackChoice> slack() {
 		return configured(ConnectorCatalog.SLACK).map(c -> new SlackChoice(c.secret("botToken"), c.secret("signingSecret"),
-				c.text("defaultKind"), c.text("defaultRepository")));
+				c.text("defaultKind"), c.text("defaultRepository"), ids(c.text("allowedChannels")),
+				ids(c.text("allowedUsers"))));
+	}
+
+	private static Set<String> ids(String csv) {
+		Set<String> ids = new LinkedHashSet<>();
+		for (String id : csv.split("[,\\s]+")) {
+			if (!id.isBlank()) {
+				ids.add(id.strip());
+			}
+		}
+		return Set.copyOf(ids);
 	}
 
 	/** Pull request feedback settings: the UI's values where set, else {@code agentic.scm.feedback}. */

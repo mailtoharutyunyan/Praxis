@@ -26,23 +26,41 @@ public final class SecretBox {
 	private static final int TAG_BITS = 128;
 
 	private final SecretKeySpec key;
+	private final java.util.List<SecretKeySpec> previous;
 	private final SecureRandom random = new SecureRandom();
 
 	public SecretBox(byte[] key) {
+		this(key, java.util.List.of());
+	}
+
+	/** @param previous keys that may still have sealed stored secrets; they only decrypt (key rotation) */
+	public SecretBox(byte[] key, java.util.List<byte[]> previous) {
+		this.key = spec(key);
+		this.previous = previous.stream().map(SecretBox::spec).toList();
+	}
+
+	private static SecretKeySpec spec(byte[] key) {
 		if (key.length != 32) {
 			throw new IllegalArgumentException("the secrets key must be 32 bytes (base64 of 32 random bytes)");
 		}
-		this.key = new SecretKeySpec(key, "AES");
+		return new SecretKeySpec(key, "AES");
 	}
 
 	/** From {@code base64Key} if set, else from (or generated into) {@code keyFile}. */
 	public static SecretBox load(String base64Key, Path keyFile) {
+		return load(base64Key, keyFile, java.util.List.of());
+	}
+
+	/** @param previousBase64Keys earlier keys, still accepted for decryption until secrets are re-encrypted */
+	public static SecretBox load(String base64Key, Path keyFile, java.util.List<String> previousBase64Keys) {
+		java.util.List<byte[]> previous = previousBase64Keys.stream().filter(k -> k != null && !k.isBlank())
+				.map(k -> Base64.getDecoder().decode(k.strip())).toList();
 		if (base64Key != null && !base64Key.isBlank()) {
-			return new SecretBox(Base64.getDecoder().decode(base64Key.strip()));
+			return new SecretBox(Base64.getDecoder().decode(base64Key.strip()), previous);
 		}
 		try {
 			if (Files.isRegularFile(keyFile)) {
-				return new SecretBox(Base64.getDecoder().decode(Files.readString(keyFile).strip()));
+				return new SecretBox(Base64.getDecoder().decode(Files.readString(keyFile).strip()), previous);
 			}
 			byte[] generated = new byte[32];
 			new SecureRandom().nextBytes(generated);
@@ -56,7 +74,7 @@ public final class SecretBox {
 			}
 			log.warn("generated a secrets key in {}; set AGENTIC_SECRETS_KEY in production and back the key up "
 					+ "with the database", keyFile);
-			return new SecretBox(generated);
+			return new SecretBox(generated, previous);
 		}
 		catch (IOException e) {
 			throw new UncheckedIOException("cannot read or create the secrets key file " + keyFile, e);
@@ -81,14 +99,32 @@ public final class SecretBox {
 	}
 
 	public String decrypt(String encoded) {
+		String plain = open(encoded, key);
+		for (int i = 0; plain == null && i < previous.size(); i++) {
+			plain = open(encoded, previous.get(i));
+		}
+		if (plain == null) {
+			throw new IllegalStateException("cannot decrypt a stored secret; was AGENTIC_SECRETS_KEY changed? Put the "
+					+ "old key in AGENTIC_SECRETS_KEY_PREVIOUS");
+		}
+		return plain;
+	}
+
+	/** Whether the current key sealed this value; others are re-encrypted after a key rotation. */
+	public boolean sealedWithCurrentKey(String encoded) {
+		return open(encoded, key) != null;
+	}
+
+	/** The plaintext, or null when this key did not seal it (GCM authentication fails). */
+	private static String open(String encoded, SecretKeySpec with) {
 		try {
 			byte[] in = Base64.getDecoder().decode(encoded);
 			Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
-			cipher.init(Cipher.DECRYPT_MODE, key, new GCMParameterSpec(TAG_BITS, in, 0, IV_BYTES));
+			cipher.init(Cipher.DECRYPT_MODE, with, new GCMParameterSpec(TAG_BITS, in, 0, IV_BYTES));
 			return new String(cipher.doFinal(in, IV_BYTES, in.length - IV_BYTES), StandardCharsets.UTF_8);
 		}
 		catch (GeneralSecurityException | IllegalArgumentException e) {
-			throw new IllegalStateException("cannot decrypt a stored secret; was AGENTIC_SECRETS_KEY changed?", e);
+			return null;
 		}
 	}
 }

@@ -62,10 +62,11 @@ class SpringAiAgentModels implements AgentModels {
 		java.util.Optional<ModelOverride.Choice> choice = override == null ? java.util.Optional.empty() : override.current();
 		if (choice.isPresent()) {
 			AgenticProperties.RoleModel configured = settings.roles().get(key);
+			String model = choice.get().roleModels().getOrDefault(key, choice.get().model());
 			AgenticProperties.RoleModel roleModel = new AgenticProperties.RoleModel(choice.get().provider().type(),
-					choice.get().model(), configured == null ? 16000 : configured.maxOutputTokens(),
+					model, configured == null ? 16000 : configured.maxOutputTokens(),
 					configured == null ? "" : configured.effort());
-			return create(key, choice.get().provider(), roleModel);
+			return create(key, choice.get().provider(), roleModel, choice.get().pricing());
 		}
 		AgenticProperties.RoleModel roleModel = settings.roles().get(key);
 		if (roleModel == null) {
@@ -75,11 +76,12 @@ class SpringAiAgentModels implements AgentModels {
 		if (provider == null) {
 			throw new IllegalStateException("role " + key + " uses unknown provider '" + roleModel.provider() + "'");
 		}
-		return create(key, provider, roleModel);
+		return create(key, provider, roleModel, null);
 	}
 
-	private AgentModel create(String key, AgenticProperties.Provider provider, AgenticProperties.RoleModel roleModel) {
-		AgenticProperties.Pricing pricing = settings.pricing().get(roleModel.model());
+	private AgentModel create(String key, AgenticProperties.Provider provider, AgenticProperties.RoleModel roleModel,
+			AgenticProperties.Pricing given) {
+		AgenticProperties.Pricing pricing = given != null ? given : settings.pricing().get(roleModel.model());
 		if (pricing == null) {
 			log.warn("no pricing for model {}; its cost is tracked as zero (token budgets still apply)", roleModel.model());
 		}

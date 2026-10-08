@@ -96,10 +96,17 @@ public final class JiraRuntime {
 		Map<String, TicketIntake.ProjectTarget> projects = new LinkedHashMap<>();
 		for (Map<String, Object> item : c.items("projects")) {
 			String baseBranch = String.valueOf(item.getOrDefault("baseBranch", "")).strip();
+			ScmKind kind = ScmKind.valueOf(String.valueOf(item.get("kind")));
+			List<Companion> companions = new java.util.ArrayList<>();
+			for (String url : String.valueOf(item.getOrDefault("companions", "")).split("[,\\s]+")) {
+				if (!url.isBlank()) {
+					RepositoryRef ref = new RepositoryRef(kind, URI.create(url.strip()));
+					companions.add(new Companion(Companion.aliasFor(ref), ref, null));
+				}
+			}
 			projects.put(String.valueOf(item.get("key")).strip(), new TicketIntake.ProjectTarget(
-					new RepositoryRef(ScmKind.valueOf(String.valueOf(item.get("kind"))),
-							URI.create(String.valueOf(item.get("cloneUrl")).strip())),
-					baseBranch.isEmpty() ? null : baseBranch, List.of()));
+					new RepositoryRef(kind, URI.create(String.valueOf(item.get("cloneUrl")).strip())),
+					baseBranch.isEmpty() ? null : baseBranch, List.copyOf(companions)));
 		}
 		return active(c.text("deployment"), c.text("baseUrl"), c.text("email"), c.secret("apiToken"),
 				c.secret("webhookSecret"), properties.jira().automationToken(), c.text("triggerLabel"), projects,

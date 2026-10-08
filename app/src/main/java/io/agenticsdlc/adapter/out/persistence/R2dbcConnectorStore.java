@@ -6,8 +6,6 @@ import io.agenticsdlc.config.connectors.ConnectorStore;
 import io.r2dbc.postgresql.codec.Json;
 import java.time.Instant;
 import java.time.OffsetDateTime;
-import java.util.Arrays;
-import java.util.List;
 import java.util.Map;
 import org.springframework.r2dbc.core.DatabaseClient;
 import org.springframework.stereotype.Repository;
@@ -16,7 +14,7 @@ import reactor.core.publisher.Mono;
 import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.json.JsonMapper;
 
-/** {@link ConnectorStore} in Postgres ({@code connectors}, {@code local_users}, {@code app_secrets}). */
+/** {@link ConnectorStore} in Postgres ({@code connectors}, {@code app_secrets}). */
 @Repository
 class R2dbcConnectorStore implements ConnectorStore {
 
@@ -63,34 +61,6 @@ class R2dbcConnectorStore implements ConnectorStore {
 	}
 
 	@Override
-	public Mono<Long> userCount() {
-		return db.sql("select count(*) as n from local_users").map(row -> row.get("n", Long.class)).one();
-	}
-
-	@Override
-	public Mono<LocalUser> user(String username) {
-		return db.sql("select username, password_hash, roles, created_at from local_users where username = :username")
-				.bind("username", username)
-				.map(row -> new LocalUser(row.get("username", String.class), row.get("password_hash", String.class),
-						List.of(Arrays.stream(row.get("roles", String.class).split(",")).map(String::strip)
-								.filter(r -> !r.isEmpty()).toArray(String[]::new)),
-						row.get("created_at", OffsetDateTime.class).toInstant()))
-				.one();
-	}
-
-	@Override
-	public Mono<Boolean> createUser(LocalUser user) {
-		return db.sql("""
-				insert into local_users (username, password_hash, roles, created_at)
-				values (:username, :hash, :roles, :createdAt) on conflict (username) do nothing""")
-				.bind("username", user.username())
-				.bind("hash", user.passwordHash())
-				.bind("roles", String.join(",", user.roles()))
-				.bind("createdAt", timestamp(user.createdAt()))
-				.fetch().rowsUpdated().map(n -> n == 1);
-	}
-
-	@Override
 	public Mono<String> appSecret(String name) {
 		return db.sql("select value from app_secrets where name = :name").bind("name", name)
 				.map(row -> row.get("value", String.class)).one();
@@ -102,5 +72,24 @@ class R2dbcConnectorStore implements ConnectorStore {
 				.bind("name", name).bind("value", value).bind("now", timestamp(Instant.now()))
 				.then()
 				.then(appSecret(name));
+	}
+
+	@Override
+	public Mono<Map<String, String>> appSecrets() {
+		return db.sql("select name, value from app_secrets")
+				.map(row -> Map.entry(row.get("name", String.class), row.get("value", String.class))).all()
+				.collectMap(Map.Entry::getKey, Map.Entry::getValue);
+	}
+
+	@Override
+	public Mono<Void> replaceAppSecret(String name, String value) {
+		return db.sql("update app_secrets set value = :value where name = :name").bind("value", value)
+				.bind("name", name).then();
+	}
+
+	@Override
+	public Mono<Void> replaceSecrets(String connectorId, String encryptedSecrets) {
+		return db.sql("update connectors set secrets = :secrets where id = :id").bind("secrets", encryptedSecrets)
+				.bind("id", connectorId).then();
 	}
 }

@@ -226,6 +226,27 @@ class SpringAiAgentModelTest {
 	}
 
 	@Test
+	void aRuntimeChoiceCanNameModelsPerRole() {
+		AgenticProperties.Models models = new AgenticProperties.Models(Map.of(), Map.of(), Map.of());
+		ModelOverride override = new ModelOverride() {
+			@Override
+			public long version() {
+				return 1;
+			}
+
+			@Override
+			public java.util.Optional<Choice> current() {
+				return java.util.Optional.of(new Choice(new AgenticProperties.Provider("ollama", "", "", "", ""), "qwen3",
+						Map.of("triage", "qwen3:4b"), new AgenticProperties.Pricing(java.math.BigDecimal.ONE,
+								java.math.BigDecimal.TEN, java.math.BigDecimal.ZERO, java.math.BigDecimal.ZERO)));
+			}
+		};
+		SpringAiAgentModels registry = new SpringAiAgentModels(properties(models), JsonMapper.builder().build(), override);
+		assertThat(registry.forRole(AgentRole.TRIAGE).id()).isEqualTo("ollama/qwen3:4b");
+		assertThat(registry.forRole(AgentRole.CODER).id()).isEqualTo("ollama/qwen3");
+	}
+
+	@Test
 	void factoryBuildsEveryProviderTypeOffline() {
 		AgenticProperties.RoleModel role = new AgenticProperties.RoleModel("p", "some-model", 2000, "low");
 		for (String type : List.of("anthropic", "openai", "azure-openai", "ollama", "google-genai")) {
@@ -246,6 +267,6 @@ class SpringAiAgentModelTest {
 	private static AgenticProperties properties(AgenticProperties.Models models) {
 		AgenticProperties.Agent agent = new AgenticProperties.Agent(true, 60, 12000, 3, 16000, java.time.Duration.ofMinutes(10),
 				4, true, true);
-		return new AgenticProperties(null, null, null, null, null, null, null, null, models, agent, null, null, null, null, null);
+		return new AgenticProperties(null, null, null, null, null, null, null, null, models, agent, null, null, null, null, null, null, null);
 	}
 }

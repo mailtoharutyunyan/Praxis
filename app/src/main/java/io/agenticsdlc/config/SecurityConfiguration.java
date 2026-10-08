@@ -5,6 +5,16 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import io.agenticsdlc.adapter.in.mcp.ProtectedResourceMetadata;
+import io.agenticsdlc.config.identity.ApiTokens;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.security.authentication.ReactiveAuthenticationManager;
+import org.springframework.security.authentication.ReactiveAuthenticationManagerResolver;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.oauth2.jwt.ReactiveJwtDecoder;
+import org.springframework.security.oauth2.server.resource.InvalidBearerTokenException;
+import org.springframework.security.oauth2.server.resource.authentication.BearerTokenAuthenticationToken;
+import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
+import org.springframework.security.oauth2.server.resource.authentication.JwtReactiveAuthenticationManager;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -48,7 +58,8 @@ class SecurityConfiguration {
 	static final String ADMIN = "ADMIN";
 
 	@Bean
-	SecurityWebFilterChain apiSecurity(ServerHttpSecurity http, AgenticProperties properties,
+	SecurityWebFilterChain apiSecurity(ServerHttpSecurity http, AgenticProperties properties, ApiTokens apiTokens,
+			ObjectProvider<ReactiveJwtDecoder> decoders,
 			@Value("${spring.ai.mcp.server.streamable-http.mcp-endpoint:/mcp}") String mcpEndpoint) {
 		return http
 				.csrf(ServerHttpSecurity.CsrfSpec::disable)
@@ -68,6 +79,10 @@ class SecurityConfiguration {
 						.pathMatchers(HttpMethod.GET, "/api/v1/setup").permitAll()
 						.pathMatchers(HttpMethod.POST, "/api/v1/setup/admin", "/api/v1/auth/login").permitAll()
 						.pathMatchers("/api/v1/connectors/**", "/api/v1/connectors").hasRole(ADMIN)
+						.pathMatchers("/api/v1/users/**", "/api/v1/users").hasRole(ADMIN)
+						// Any signed-in user manages their own session and API tokens (the controllers refuse API tokens).
+						.pathMatchers(HttpMethod.POST, "/api/v1/auth/logout", "/api/v1/auth/password").authenticated()
+						.pathMatchers("/api/v1/tokens/**", "/api/v1/tokens").authenticated()
 						// MCP clients discover the authorization server here (RFC 9728).
 						.pathMatchers(HttpMethod.GET, ProtectedResourceMetadata.PATH, ProtectedResourceMetadata.PATH + "/**")
 						.permitAll()
@@ -82,8 +97,8 @@ class SecurityConfiguration {
 						.anyExchange().denyAll())
 				.oauth2ResourceServer(oauth2 -> oauth2
 						.authenticationEntryPoint(SecurityConfiguration::challenge)
-						.jwt(jwt -> jwt.jwtAuthenticationConverter(rolesConverter(
-								properties.security().local() ? "roles" : properties.security().rolesClaim()))))
+						.authenticationManagerResolver(managers(apiTokens, decoders,
+								properties.security().local() ? "roles" : properties.security().rolesClaim())))
 				.headers(headers -> headers
 						// The UI renews tokens in a hidden same-origin iframe (silent-renew.html).
 						.frameOptions(frame -> frame.mode(XFrameOptionsServerHttpHeadersWriter.Mode.SAMEORIGIN))
@@ -91,6 +106,30 @@ class SecurityConfiguration {
 						.referrerPolicy(referrer -> referrer.policy(
 								org.springframework.security.web.server.header.ReferrerPolicyServerHttpHeadersWriter.ReferrerPolicy.NO_REFERRER)))
 				.build();
+	}
+
+	/**
+	 * Bearer tokens starting with {@link ApiTokens#PREFIX} are personal API tokens, looked up in the database; any other
+	 * bearer token is a JWT (from the identity provider, or the app's own in local mode). Both end up as a
+	 * {@link JwtAuthenticationToken}, so controllers and tools see the same principal either way.
+	 */
+	static ReactiveAuthenticationManagerResolver<ServerWebExchange> managers(ApiTokens apiTokens,
+			ObjectProvider<ReactiveJwtDecoder> decoders, String rolesClaim) {
+		ReactiveAuthenticationManager tokens = authentication -> apiTokens
+				.authenticate(((BearerTokenAuthenticationToken) authentication).getToken())
+				.<Authentication>map(jwt -> new JwtAuthenticationToken(jwt, roles(jwt.getClaims(), "roles"), jwt.getSubject()))
+				.switchIfEmpty(Mono.error(() -> new InvalidBearerTokenException("unknown, expired or revoked API token")));
+		Mono<ReactiveAuthenticationManager> jwts = Mono.fromSupplier(() -> {
+			JwtReactiveAuthenticationManager manager = new JwtReactiveAuthenticationManager(decoders.getObject());
+			manager.setJwtAuthenticationConverter(rolesConverter(rolesClaim));
+			return (ReactiveAuthenticationManager) manager;
+		}).cacheInvalidateIf(m -> false);
+		return exchange -> {
+			String header = exchange.getRequest().getHeaders().getFirst(org.springframework.http.HttpHeaders.AUTHORIZATION);
+			boolean apiToken = header != null && header.regionMatches(true, 0, "Bearer ", 0, 7)
+					&& ApiTokens.looksLikeToken(header.substring(7).strip());
+			return apiToken ? Mono.just(tokens) : jwts;
+		};
 	}
 
 	/**

@@ -67,6 +67,35 @@ class R2dbcRunStoreTest {
 		return store.submit(task, run, List.of(created)).block();
 	}
 
+	@Autowired
+	io.agenticsdlc.config.Housekeeping housekeeping;
+
+	@Test
+	void retentionDeletesOldFinishedRunsAndKeepsEverythingElse() {
+		RunStore.Submission old = submit(task(null));
+		RunStore.Submission recent = submit(task(null));
+		RunStore.Submission live = submit(task(null));
+		UUID oldId = old.view().run().id();
+		Instant longAgo = now.minus(java.time.Duration.ofDays(400));
+		db.sql("update runs set state = 'CANCELLED', updated_at = :at where id in (:old, :recent)")
+				.bind("at", longAgo.atOffset(java.time.ZoneOffset.UTC)).bind("old", oldId)
+				.bind("recent", recent.view().run().id()).then().block();
+		db.sql("update runs set updated_at = now() where id = :id").bind("id", recent.view().run().id()).then().block();
+		db.sql("update runs set updated_at = :at where id = :id").bind("at", longAgo.atOffset(java.time.ZoneOffset.UTC))
+				.bind("id", live.view().run().id()).then().block();
+
+		Long deleted = housekeeping.deleteFinishedRuns(now.minus(java.time.Duration.ofDays(180)), 500).block();
+
+		assertThat(deleted).isGreaterThanOrEqualTo(1);
+		assertThat(store.find(oldId).blockOptional()).isEmpty();
+		assertThat(store.events(oldId, 0, 10).collectList().block()).isEmpty();
+		assertThat(db.sql("select count(*) as n from tasks where id = :id").bind("id", old.view().task().id())
+				.map(row -> row.get("n", Long.class)).one().block()).isZero();
+		// Recently finished and still-running runs stay, however old the latter is.
+		assertThat(store.find(recent.view().run().id()).blockOptional()).isPresent();
+		assertThat(store.find(live.view().run().id()).blockOptional()).isPresent();
+	}
+
 	@Test
 	void submitAndFindRoundTrip() {
 		Task task = task(null);

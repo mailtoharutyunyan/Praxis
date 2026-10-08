@@ -17,7 +17,7 @@ public final class SlackRuntime {
 
 	/** A configured Slack app: the client, thread updates, how commands are verified and the default target. */
 	public record Active(Threads threads, TicketUpdates updates, String signingSecret, String defaultKind,
-			String defaultRepository, String runLinkBase) {
+			String defaultRepository, String runLinkBase, ConnectorSettings.SlackChoice settings) {
 	}
 
 	/** Starts a thread in a channel; emits its reference, {@code <channel>:<ts>}. */
@@ -56,7 +56,7 @@ public final class SlackRuntime {
 				String links = connectors.runLinkBase("");
 				return new Active((channel, text) -> client.postMessage(channel, null, text), new TicketUpdates(store, client, cursors, TaskOrigin.SLACK, clock,
 						Duration.ofDays(7), links), slack.signingSecret(), slack.defaultKind(), slack.defaultRepository(),
-						links);
+						links, slack);
 			}));
 			built = snapshot;
 		}

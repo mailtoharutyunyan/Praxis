@@ -88,6 +88,9 @@ agentic:
     mode: ${AGENTIC_SECURITY_MODE:oidc}
     secrets-key: ${AGENTIC_SECRETS_KEY:}
     data-dir: ${AGENTIC_DATA_DIR:}
+    # Comma-separated keys that encrypted secrets before the current one (key rotation).
+    previous-secrets-keys: ${AGENTIC_SECRETS_KEY_PREVIOUS:}
+    setup-code: ${AGENTIC_SETUP_CODE:}
   events:
     fallback-poll: 5s
     keep-alive: 15s
