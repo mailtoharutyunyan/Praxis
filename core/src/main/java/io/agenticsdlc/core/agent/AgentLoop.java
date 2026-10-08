@@ -109,7 +109,7 @@ public final class AgentLoop {
 						List<AgentMessage> messages = new ArrayList<>(state.messages());
 						messages.add(new AgentMessage.Assistant(reply.text(), reply.toolCalls(), reply.nativeMessage()));
 						messages.add(new AgentMessage.ToolResults(results));
-						if (usage.totalTokens() > tokenBudget) {
+						if (usage.budgetTokens() > tokenBudget) {
 							return Mono.just(new Outcome(Stop.BUDGET_EXHAUSTED, "token budget for this stage exhausted",
 									usage, turns));
 						}

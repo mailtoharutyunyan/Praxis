@@ -133,7 +133,7 @@ final class StreamJsonTranscript {
 
 	/** Whether the call has spent more tokens than it may; it is then stopped. */
 	boolean overBudget() {
-		return streamed().totalTokens() > tokenBudget;
+		return streamed().budgetTokens() > tokenBudget;
 	}
 
 	/** The outcome once the output has ended, or the call was stopped for its budget. */

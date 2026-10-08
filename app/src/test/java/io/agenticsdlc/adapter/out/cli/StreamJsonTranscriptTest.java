@@ -131,7 +131,8 @@ class StreamJsonTranscriptTest {
 
 	@Test
 	void spendingOverTheBudgetIsNoticedAsItHappens() throws IOException {
-		StreamJsonTranscript transcript = transcript(5_000);
+		// The budget counts cache reads at a tenth: 4201 after the first message, 4201 + 50 + 4200 / 10 + 1 after the second.
+		StreamJsonTranscript transcript = transcript(4_500);
 		List<String> lines = lines();
 		feed(transcript, lines.subList(0, 2));
 		assertThat(transcript.overBudget()).isFalse();

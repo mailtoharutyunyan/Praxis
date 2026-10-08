@@ -40,6 +40,13 @@ record ClaudeCodeCommand(String line, Map<String, String> env) {
 	 */
 	static ClaudeCodeCommand of(String binary, String token, String model, int maxTurns, Access access, String dir,
 			BigDecimal maxBudgetUsd) {
+		return of(binary, token, model, maxTurns, access, dir, maxBudgetUsd, false);
+	}
+
+	/** @param memory the call may write the facts it learns to {@value #MEMORY_FILE} in its scratch directory */
+	static ClaudeCodeCommand of(String binary, String token, String model, int maxTurns, Access access, String dir,
+			BigDecimal maxBudgetUsd, boolean memory) {
+		boolean facts = memory && access != Access.NONE;
 		List<String> args = new ArrayList<>(List.of(binary, "-p", "--output-format", "stream-json", "--verbose",
 				"--max-turns", String.valueOf(access == Access.NONE ? 1 : maxTurns)));
 		if (!model.isBlank()) {
@@ -51,11 +58,15 @@ record ClaudeCodeCommand(String line, Map<String, String> env) {
 				"--setting-sources", "user", "--settings", dir + "/settings.json", "--mcp-config", dir + "/mcp.json",
 				"--strict-mcp-config",
 				"--permission-mode", "dontAsk", "--permission-prompts", "none",
-				"--tools", String.join(",", tools(access))));
+				"--tools", String.join(",", tools(access, facts))));
 		if (maxBudgetUsd != null) {
 			args.addAll(List.of("--max-budget-usd", maxBudgetUsd.toPlainString()));
 		}
-		List<String> allowed = allowedTools(access, dir);
+		List<String> allowed = new ArrayList<>(allowedTools(access, dir));
+		if (facts) {
+			// The only file a read-only call may write; it is outside the workspace and never part of a change.
+			allowed.add("Edit(/" + dir + "/" + MEMORY_FILE + ")");
+		}
 		if (!allowed.isEmpty()) {
 			// Variadic, so last.
 			args.add("--allowedTools");
@@ -72,6 +83,16 @@ record ClaudeCodeCommand(String line, Map<String, String> env) {
 				+ " && exec " + args.stream().map(arg -> shellQuote(arg)).collect(Collectors.joining(" "))
 				+ " < " + shellQuote(dir + "/brief.md");
 		return new ClaudeCodeCommand(line, environment(token));
+	}
+
+	/** Where a call writes the repository facts it learned, one JSON object per line, for the remember tool. */
+	static final String MEMORY_FILE = "memory.jsonl";
+
+	/** The built-in tools, plus Write for a read-only call that may record facts (only to {@link #MEMORY_FILE}). */
+	static List<String> tools(Access access, boolean facts) {
+		List<String> tools = tools(access);
+		return facts && !tools.contains("Write") ? java.util.stream.Stream.concat(tools.stream(),
+				java.util.stream.Stream.of("Write")).toList() : tools;
 	}
 
 	/** The built-in tools the call has at all; anything else, including subagents and web access, is unavailable. */
