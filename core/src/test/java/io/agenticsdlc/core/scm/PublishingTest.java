@@ -109,7 +109,7 @@ class PublishingTest {
 		StageOutcome outcome = stage().execute(context()).block();
 
 		assertThat(outcome).isInstanceOfSatisfying(StageOutcome.Completed.class,
-				c -> assertThat(c.summary()).containsEntry("pullRequest", "https://github.com/acme/shop/pull/42"));
+				c -> assertThat(c.summary()).containsEntry("pullRequests", java.util.List.of("https://github.com/acme/shop/pull/42")));
 		assertThat(pushes).singleElement().satisfies(m -> assertThat(m).startsWith("SHOP-42: Add search")
 				.contains("Agentic-SDLC-Run: " + runId));
 		assertThat(opened).singleElement().satisfies(r -> {

@@ -1,7 +1,6 @@
 package io.agenticsdlc.core.scm;
 
 import io.agenticsdlc.core.application.RunCommands;
-import io.agenticsdlc.core.domain.RunEvent;
 import io.agenticsdlc.core.domain.RunEventType;
 import io.agenticsdlc.core.domain.RunState;
 import io.agenticsdlc.core.domain.RunView;
@@ -62,28 +61,22 @@ public final class PullRequestTracker {
 		return new RunStore.Cursor(view.run().createdAt(), view.run().id());
 	}
 
+	/**
+	 * A run with several pull requests (companion repositories) is DONE when all are merged, and CANCELLED once none
+	 * is open but not all were merged.
+	 */
 	public Mono<UUID> check(RunView view) {
-		return pullRequestOf(view.run().id())
-				.flatMap(pr -> pullRequests.state(view, pr))
-				.filter(state -> state != PullRequests.PullRequestState.OPEN)
-				.flatMap(state -> commands.closePullRequest(view.run().id(), state == PullRequests.PullRequestState.MERGED,
-						ACTOR)
+		return store.latestEvents(view.run().id(), Set.of(RunEventType.ARTIFACT_PRODUCED), 200).collectList()
+				.map(events -> PullRequestArtifacts.latest(events, view.task().repository()))
+				.filter(published -> !published.isEmpty())
+				.flatMap(published -> Flux.fromIterable(published)
+						.concatMap(p -> pullRequests.state(view, p.pullRequest()))
+						.collectList())
+				.filter(states -> !states.contains(PullRequests.PullRequestState.OPEN))
+				.map(states -> states.stream().allMatch(s -> s == PullRequests.PullRequestState.MERGED))
+				.flatMap(merged -> commands.closePullRequest(view.run().id(), merged, ACTOR)
 						.flatMap(run -> memory == null ? Mono.just(run)
-								: memory.settleRun(run.id(), state == PullRequests.PullRequestState.MERGED,
-										clock.instant().plus(retention)).thenReturn(run)))
+								: memory.settleRun(run.id(), merged, clock.instant().plus(retention)).thenReturn(run)))
 				.map(run -> run.id());
-	}
-
-	private Mono<PullRequests.PullRequest> pullRequestOf(UUID runId) {
-		return store.latestEvents(runId, Set.of(RunEventType.ARTIFACT_PRODUCED), 50)
-				.filter(e -> PublishStage.PULL_REQUEST.equals(e.payload().get("kind")))
-				.last()
-				.map(PullRequestTracker::toPullRequest)
-				.onErrorResume(java.util.NoSuchElementException.class, e -> Mono.empty());
-	}
-
-	private static PullRequests.PullRequest toPullRequest(RunEvent event) {
-		return new PullRequests.PullRequest(String.valueOf(event.payload().get("id")),
-				String.valueOf(event.payload().get("url")));
 	}
 }

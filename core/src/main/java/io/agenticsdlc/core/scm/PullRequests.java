@@ -1,5 +1,6 @@
 package io.agenticsdlc.core.scm;
 
+import io.agenticsdlc.core.domain.RepositoryRef;
 import io.agenticsdlc.core.domain.RunView;
 import java.util.List;
 import reactor.core.publisher.Mono;
@@ -40,8 +41,32 @@ public interface PullRequests {
 	record FailedJob(String name, String url, String logTail) {
 	}
 
-	/** @param id provider identifier: number (GitHub, Bitbucket, Azure DevOps) or IID (GitLab) */
-	record PullRequest(String id, String url) {
+	/**
+	 * @param id provider identifier: number (GitHub, Bitbucket, Azure DevOps) or IID (GitLab)
+	 * @param repository where it lives; null for the task's primary repository
+	 */
+	record PullRequest(String id, String url, RepositoryRef repository) {
+		public PullRequest(String id, String url) {
+			this(id, url, null);
+		}
+	}
+
+	/** Opens (or finds) the pull request in another of the run's repositories (a companion, ADR-0006). */
+	default Mono<PullRequest> open(RunView view, RepositoryRef repository, OpenRequest request) {
+		if (repository.equals(view.task().repository())) {
+			return open(view, request);
+		}
+		return Mono.error(new UnsupportedOperationException("this host cannot open pull requests in companion repositories"));
+	}
+
+	/** {@link #canWrite} for a specific repository of the run. */
+	default Mono<Boolean> canWrite(RunView view, RepositoryRef repository, String user) {
+		return repository.equals(view.task().repository()) ? canWrite(view, user) : Mono.just(false);
+	}
+
+	/** {@link #failedJobs} for a specific repository of the run. */
+	default Mono<List<FailedJob>> failedJobs(RunView view, RepositoryRef repository, String pipelineId) {
+		return repository.equals(view.task().repository()) ? failedJobs(view, pipelineId) : Mono.just(List.of());
 	}
 
 	enum PullRequestState {

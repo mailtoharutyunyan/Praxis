@@ -58,7 +58,7 @@ public final class RunWorkspace implements Environments {
 	public Mono<Prepared> prepare(StageContext context) {
 		UUID runId = context.run().id();
 		return checkout.checkout(context.view())
-				.flatMap(info -> BuildPlan.detect(info.files(), info.projectConfig())
+				.flatMap(info -> plan(info)
 						.map(plan -> {
 							plans.put(runId, plan);
 							return sandbox.startSidecars(runId, plan.sidecars())
@@ -67,6 +67,19 @@ public final class RunWorkspace implements Environments {
 									.then(Mono.just(new Prepared(info, plan)));
 						})
 						.orElseGet(() -> Mono.error(new UndetectableBuildException(info))));
+	}
+
+	/** The primary repository's services, then each companion repository's (ADR-0006). */
+	static Optional<BuildPlan> plan(CheckoutInfo info) {
+		Optional<BuildPlan> plan = BuildPlan.detect(info.files(), info.projectConfig());
+		for (CheckoutInfo.Companion companion : info.companions()) {
+			Optional<BuildPlan> theirs = BuildPlan.detect(companion.files(), companion.projectConfig())
+					.map(p -> p.within(companion.path(), companion.alias()));
+			if (theirs.isPresent()) {
+				plan = Optional.of(plan.map(mine -> mine.plus(theirs.get())).orElse(theirs.get()));
+			}
+		}
+		return plan;
 	}
 
 	/** One environment per distinct component; the main component's is {@link SandboxSpec#MAIN}. */

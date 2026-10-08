@@ -68,14 +68,25 @@ public final class VerifyStage implements StageHandler {
 	}
 
 	private Mono<StageOutcome> scan(StageContext context, String diff, int commands) {
-		return scanner.scan(context.run().id(), TestPaths.changedFiles(diff))
+		List<String> changed = TestPaths.changedFiles(diff);
+		return scanner.scan(context.run().id(), changed)
 				.onErrorResume(e -> Mono.just(new SecurityScanner.Report(List.of(),
 						List.of("Security scan could not run: " + e.getMessage()))))
+				.map(report -> {
+					String contracts = ContractFiles.note(changed);
+					if (contracts == null) {
+						return report;
+					}
+					List<String> notes = new java.util.ArrayList<>(report.notes());
+					notes.add(contracts);
+					return new SecurityScanner.Report(report.findings(), notes);
+				})
 				.flatMap(report -> {
 					Map<String, Object> scan = new LinkedHashMap<>();
 					scan.put("kind", SCAN);
 					scan.put("findings", report.findings().size());
 					scan.put("blocking", report.blocking().size());
+					scan.put("contracts", ContractFiles.changed(changed));
 					scan.put("content", report.summary());
 					Mono<Void> recorded = context.emit(RunEventType.ARTIFACT_PRODUCED, "system", scan);
 					if (!report.blocking().isEmpty()) {

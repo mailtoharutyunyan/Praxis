@@ -6,6 +6,7 @@ import io.agenticsdlc.core.application.RevisionRequest;
 import io.agenticsdlc.core.application.RunCommands;
 import io.agenticsdlc.core.application.RunQueries;
 import io.agenticsdlc.core.application.TaskIntake;
+import io.agenticsdlc.core.domain.Companion;
 import io.agenticsdlc.core.domain.RepositoryRef;
 import io.agenticsdlc.core.domain.Run;
 import io.agenticsdlc.core.domain.RunEvent;
@@ -84,11 +85,19 @@ class RunTools {
 			@McpToolParam(description = "Branch to start from and target; default: the repository's default branch.",
 					required = false) String baseBranch,
 			@McpToolParam(description = "Any unique string; resubmitting with the same key returns the same run.",
-					required = false) String idempotencyKey) {
+					required = false) String idempotencyKey,
+			@McpToolParam(description = "Clone URLs of other repositories to change in the same run (e.g. consumers "
+					+ "of an API); same code host kind. Each gets its own pull request.", required = false)
+			List<String> companionRepositories) {
+		ScmKind kind = scmKind(repositoryKind);
+		List<Companion> companions = companionRepositories == null ? List.of() : companionRepositories.stream()
+				.filter(url -> url != null && !url.isBlank())
+				.map(url -> new RepositoryRef(kind, URI.create(url.strip())))
+				.map(ref -> new Companion(Companion.aliasFor(ref), ref, null)).toList();
 		return caller(OPERATE).flatMap(user -> {
 			NewTask task = new NewTask(TaskOrigin.MCP, null, required("title", title), required("description", description),
-					new RepositoryRef(scmKind(repositoryKind), URI.create(required("cloneUrl", cloneUrl))),
-					blankToNull(baseBranch), user.getName(), blankToNull(idempotencyKey));
+					new RepositoryRef(kind, URI.create(required("cloneUrl", cloneUrl))),
+					blankToNull(baseBranch), user.getName(), blankToNull(idempotencyKey), companions);
 			return intake.submit(task).map(submission -> summary(submission.view()));
 		});
 	}

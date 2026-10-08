@@ -11,6 +11,8 @@ export interface NewTask {
   description: string;
   repository: { kind: ScmKind; cloneUrl: string };
   baseBranch?: string;
+  /** Other repositories changed in the same run, e.g. an API's consumers; each gets its own pull request. */
+  companions?: { cloneUrl: string }[];
 }
 
 /** Typed client for /api/v1. Every call carries the session's bearer token. */

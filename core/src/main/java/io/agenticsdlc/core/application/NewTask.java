@@ -11,5 +11,15 @@ import io.agenticsdlc.core.domain.TaskOrigin;
  * @param idempotencyKey optional client key that makes retries of the same submission safe
  */
 public record NewTask(TaskOrigin origin, String externalRef, String title, String description, RepositoryRef repository,
-		String baseBranch, String requestedBy, String idempotencyKey) {
+		String baseBranch, String requestedBy, String idempotencyKey, java.util.List<io.agenticsdlc.core.domain.Companion> companions) {
+
+	public NewTask {
+		companions = companions == null ? java.util.List.of() : java.util.List.copyOf(companions);
+	}
+
+	public NewTask(TaskOrigin origin, String externalRef, String title, String description, RepositoryRef repository,
+			String baseBranch, String requestedBy, String idempotencyKey) {
+		this(origin, externalRef, title, description, repository, baseBranch, requestedBy, idempotencyKey,
+				java.util.List.of());
+	}
 }

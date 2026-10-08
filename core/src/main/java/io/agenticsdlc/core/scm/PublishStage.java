@@ -10,9 +10,11 @@ import io.agenticsdlc.core.engine.StageOutcome;
 import io.agenticsdlc.core.stage.RunHistory;
 import io.agenticsdlc.core.workspace.RepositoryCheckout;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 /**
@@ -65,23 +67,62 @@ public final class PublishStage implements StageHandler {
 
 	private Mono<StageOutcome> publish(StageContext context, Task task, RunHistory history) {
 		// Deferred: the external writes must not even start unless the fence event before them was accepted.
-		return progress(context, "Pushing the work branch.")
-				.then(Mono.defer(() -> publisher.commitAndPush(context.view(), commitMessage(context, history))))
-				.flatMap(pushed -> progress(context, "Opening the pull request for " + pushed.branch() + ".")
-						.then(Mono.defer(() -> pullRequests.open(context.view(), new PullRequests.OpenRequest(
-								pushed.branch(), pushed.baseBranch(), title(task), body(context, history)))))
-						.flatMap(pr -> {
-							Map<String, Object> payload = new LinkedHashMap<>();
-							payload.put("kind", PULL_REQUEST);
-							payload.put("id", pr.id());
-							payload.put("url", pr.url());
-							payload.put("branch", pushed.branch());
-							payload.put("commit", pushed.commit());
-							payload.put("content", pr.url());
-							return context.emit(RunEventType.ARTIFACT_PRODUCED, "system", payload)
-									.thenReturn((StageOutcome) new StageOutcome.Completed(Usage.ZERO,
-											Map.of("pullRequest", pr.url(), "commit", pushed.commit())));
-						}));
+		return progress(context, task.companions().isEmpty() ? "Pushing the work branch."
+				: "Pushing the work branches of the changed repositories.")
+				.then(Mono.defer(() -> publisher.commitAndPushAll(context.view(), commitMessage(context, history))))
+				.flatMap(pushes -> {
+					if (pushes.isEmpty()) {
+						return Mono.just((StageOutcome) new StageOutcome.Escalate("no repository has changes to publish",
+								Usage.ZERO));
+					}
+					String across = pushes.size() == 1 ? "" : "\n\nPart of one change across " + pushes.size()
+							+ " repositories: " + String.join(", ", pushes.stream().map(p -> p.repository().cloneUrl()
+									.toString()).toList()) + ". Merge them together.";
+					return Flux.fromIterable(pushes)
+							.concatMap(push -> openPullRequest(context, task, history, push, across))
+							.collectList()
+							.flatMap(opened -> crossLink(context, opened).thenReturn((StageOutcome) new StageOutcome.Completed(
+									Usage.ZERO, Map.of("pullRequests", opened.stream().map(PullRequests.PullRequest::url)
+											.toList()))));
+				});
+	}
+
+	private Mono<PullRequests.PullRequest> openPullRequest(StageContext context, Task task, RunHistory history,
+			ChangePublisher.RepositoryPush push, String across) {
+		ChangePublisher.PushedBranch pushed = push.branch();
+		PullRequests.OpenRequest request = new PullRequests.OpenRequest(pushed.branch(), pushed.baseBranch(), title(task),
+				abbreviate(body(context, history) + across, MAX_BODY_CHARS));
+		return progress(context, "Opening the pull request for " + pushed.branch()
+				+ (push.alias() == null ? "" : " in " + push.alias()) + ".")
+				.then(Mono.defer(() -> push.alias() == null ? pullRequests.open(context.view(), request)
+						: pullRequests.open(context.view(), push.repository(), request)))
+				.flatMap(pr -> {
+					Map<String, Object> payload = new LinkedHashMap<>();
+					payload.put("kind", PULL_REQUEST);
+					payload.put("id", pr.id());
+					payload.put("url", pr.url());
+					payload.put("branch", pushed.branch());
+					payload.put("commit", pushed.commit());
+					payload.put("repository", push.repository().cloneUrl().toString());
+					payload.put("scmKind", push.repository().kind().name());
+					if (push.alias() != null) {
+						payload.put("alias", push.alias());
+					}
+					payload.put("content", pr.url());
+					return context.emit(RunEventType.ARTIFACT_PRODUCED, "system", payload).thenReturn(pr);
+				});
+	}
+
+	/** With several pull requests, each gets a comment listing the others, so reviewers merge them together. */
+	private Mono<Void> crossLink(StageContext context, List<PullRequests.PullRequest> opened) {
+		if (opened.size() < 2) {
+			return Mono.empty();
+		}
+		String all = String.join("\n", opened.stream().map(pr -> "- " + pr.url()).toList());
+		return Flux.fromIterable(opened)
+				.concatMap(pr -> pullRequests.comment(context.view(), pr, "This change spans several repositories. "
+						+ "Its pull requests:\n" + all).onErrorResume(e -> Mono.empty()))
+				.then();
 	}
 
 	private static Mono<Void> progress(StageContext context, String message) {
@@ -117,7 +158,7 @@ public final class PublishStage implements StageHandler {
 				.ifPresent(spec -> body.append("<details><summary>Specification</summary>\n\n").append(abbreviate(spec, 20_000))
 						.append("\n\n</details>\n\n"));
 		history.latestArtifact(io.agenticsdlc.core.stage.VerifyStage.SCAN)
-				.ifPresent(scan -> body.append("<details><summary>Security scans</summary>\n\n").append(abbreviate(scan, 10_000))
+				.ifPresent(scan -> body.append("<details><summary>Automated checks (security, API contracts)</summary>\n\n").append(abbreviate(scan, 10_000))
 						.append("\n\n</details>\n\n"));
 		history.latestArtifact(RunHistory.REVIEW)
 				.ifPresent(review -> body.append("<details><summary>Automated review</summary>\n\n")

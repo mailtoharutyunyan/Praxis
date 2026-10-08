@@ -25,4 +25,11 @@ public record RepositoryRef(ScmKind kind, URI cloneUrl) {
 			throw new IllegalArgumentException("cloneUrl must not embed credentials");
 		}
 	}
+
+	/** One key per repository however its URL is spelled: host and path, lower case, without {@code .git}. */
+	public String key() {
+		String path = cloneUrl.getPath() == null ? "" : cloneUrl.getPath();
+		path = path.replaceAll("/+$", "").replaceAll("\\.git$", "");
+		return (cloneUrl.getHost() + path).toLowerCase(java.util.Locale.ROOT);
+	}
 }

@@ -18,9 +18,16 @@ import reactor.core.publisher.Mono;
 public final class TicketIntake {
 
 	/** Where a ticket project's work goes. */
-	public record ProjectTarget(RepositoryRef repository, String baseBranch) {
+	/** @param companions other repositories every task of the project may change too (ADR-0006) */
+	public record ProjectTarget(RepositoryRef repository, String baseBranch,
+			java.util.List<io.agenticsdlc.core.domain.Companion> companions) {
 		public ProjectTarget {
 			Objects.requireNonNull(repository, "repository");
+			companions = companions == null ? java.util.List.of() : java.util.List.copyOf(companions);
+		}
+
+		public ProjectTarget(RepositoryRef repository, String baseBranch) {
+			this(repository, baseBranch, java.util.List.of());
 		}
 	}
 
@@ -77,7 +84,8 @@ public final class TicketIntake {
 			String description = (ticket.description().isBlank() ? "(no description)" : ticket.description())
 					+ (ticket.url() == null ? "" : "\n\nTicket: " + ticket.url());
 			NewTask task = new NewTask(origin, ticket.key(), ticket.title(), description, target.repository(),
-					target.baseBranch(), source + ":" + trigger.actor(), source + ":" + ticket.key() + ":" + trigger.eventId());
+					target.baseBranch(), source + ":" + trigger.actor(), source + ":" + ticket.key() + ":" + trigger.eventId(),
+					target.companions());
 			return intake.submit(task).map(submission -> (Result) new Result.Started(submission));
 		});
 	}

@@ -1,5 +1,6 @@
 package io.agenticsdlc.adapter.out.scm;
 
+import io.agenticsdlc.core.domain.RepositoryRef;
 import io.agenticsdlc.core.domain.RunView;
 import io.agenticsdlc.core.domain.ScmKind;
 import io.agenticsdlc.core.scm.PullRequests;
@@ -53,9 +54,16 @@ public class ScmPullRequests implements PullRequests {
 	 */
 	@Override
 	public Mono<PullRequest> open(RunView view, OpenRequest request) {
+		return open(view, view.task().repository(), request);
+	}
+
+	@Override
+	public Mono<PullRequest> open(RunView view, RepositoryRef repository, OpenRequest request) {
 		return Mono.defer(() -> {
-			RepoCoordinates repo = RepoCoordinates.of(view.task().repository());
-			return providers.get(repo.kind()).open(repo, request);
+			RepoCoordinates repo = RepoCoordinates.of(repository);
+			return providers.get(repo.kind()).open(repo, request)
+					.map(pr -> repository.equals(view.task().repository()) ? pr
+							: new PullRequest(pr.id(), pr.url(), repository));
 		}).retryWhen(Retry.backoff(3, retryBackoff).filter(ScmHttp::retryableOperation)
 				.onRetryExhaustedThrow((spec, signal) -> signal.failure()));
 	}
@@ -63,7 +71,7 @@ public class ScmPullRequests implements PullRequests {
 	@Override
 	public Mono<PullRequestState> state(RunView view, PullRequest pullRequest) {
 		return Mono.defer(() -> {
-			RepoCoordinates repo = RepoCoordinates.of(view.task().repository());
+			RepoCoordinates repo = RepoCoordinates.of(repositoryOf(view, pullRequest));
 			return providers.get(repo.kind()).state(repo, pullRequest);
 		});
 	}
@@ -71,24 +79,38 @@ public class ScmPullRequests implements PullRequests {
 	@Override
 	public Mono<Void> comment(RunView view, PullRequest pullRequest, String text) {
 		return Mono.defer(() -> {
-			RepoCoordinates repo = RepoCoordinates.of(view.task().repository());
+			RepoCoordinates repo = RepoCoordinates.of(repositoryOf(view, pullRequest));
 			return providers.get(repo.kind()).comment(repo, pullRequest, text);
 		});
 	}
 
 	@Override
 	public Mono<Boolean> canWrite(RunView view, String user) {
+		return canWrite(view, view.task().repository(), user);
+	}
+
+	@Override
+	public Mono<Boolean> canWrite(RunView view, RepositoryRef repository, String user) {
 		return Mono.defer(() -> {
-			RepoCoordinates repo = RepoCoordinates.of(view.task().repository());
+			RepoCoordinates repo = RepoCoordinates.of(repository);
 			return providers.get(repo.kind()).canWrite(repo, user);
 		});
 	}
 
 	@Override
 	public Mono<List<FailedJob>> failedJobs(RunView view, String pipelineId) {
+		return failedJobs(view, view.task().repository(), pipelineId);
+	}
+
+	@Override
+	public Mono<List<FailedJob>> failedJobs(RunView view, RepositoryRef repository, String pipelineId) {
 		return Mono.defer(() -> {
-			RepoCoordinates repo = RepoCoordinates.of(view.task().repository());
+			RepoCoordinates repo = RepoCoordinates.of(repository);
 			return providers.get(repo.kind()).failedJobs(repo, pipelineId);
 		});
+	}
+
+	private static RepositoryRef repositoryOf(RunView view, PullRequest pullRequest) {
+		return pullRequest.repository() == null ? view.task().repository() : pullRequest.repository();
 	}
 }

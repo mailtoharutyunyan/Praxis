@@ -362,9 +362,10 @@ public final class AgentStages {
 					history.currentRevision().ifPresent(revision -> brief.append(Prompts.revision(revision))
 							.append("\nCheck that the changes address this request."));
 					brief.append(testsNote);
-					history.latestArtifact(VerifyStage.SCAN).filter(scan -> !scan.startsWith("No findings")).ifPresent(scan ->
-							brief.append("\n\nAutomated security scans of the changed files reported:\n")
-									.append(Prompts.block("scan", scan)).append("\nWeigh these in your review."));
+					history.latestArtifact(VerifyStage.SCAN).filter(scan -> !scan.equals("No findings in the changed files."))
+							.ifPresent(scan -> brief.append("\n\nAutomated checks of the changed files (security scans, "
+									+ "API contracts) reported:\n").append(Prompts.block("scan", scan))
+									.append("\nWeigh these in your review."));
 					brief.append("\n\nReview the current changes (show_diff).");
 					return artifact(context, RunHistory.DIFF, diff, Map.of(RunHistory.FINGERPRINT, RunHistory.fingerprint(diff)))
 							.then(loop(AgentRole.REVIEWER, withMemory(tools.readOnlyTools()), loopLimits)
@@ -401,6 +402,15 @@ public final class AgentStages {
 	private static void appendRepository(StringBuilder brief, RunWorkspace.Prepared prepared) {
 		var plan = prepared.plan();
 		brief.append("\n\nRepository: base branch ").append(prepared.checkout().baseBranch()).append('.');
+		if (!prepared.checkout().companions().isEmpty()) {
+			brief.append(" This change spans several repositories: the primary one is the workspace root, and these "
+					+ "companions are checked out inside it (each is committed and gets its own pull request):");
+			for (var companion : prepared.checkout().companions()) {
+				brief.append("\n- ").append(companion.alias()).append(" at ").append(companion.path()).append("/ (")
+						.append(companion.cloneUrl()).append(", base ").append(companion.baseBranch()).append(')');
+			}
+			brief.append('\n');
+		}
 		if (plan.components().size() == 1 && plan.main().path().equals(".")) {
 			var profile = plan.main().profile();
 			brief.append(" Toolchain: ").append(profile.tool()).append(". Build: `").append(profile.build())

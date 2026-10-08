@@ -83,7 +83,9 @@ export function RunPage(props: {
   const isApprover = roles.includes("approver");
   const isOperator = roles.includes("operator");
   const live = !TERMINAL.includes(run.state);
-  const pr = [...events].reverse().find((e) => e.type === "ARTIFACT_PRODUCED" && e.payload.kind === "pull-request");
+  // One pull request per repository: the primary one and any companions.
+  const prs = [...new Map(events.filter((e) => e.type === "ARTIFACT_PRODUCED" && e.payload.kind === "pull-request")
+    .map((e) => [String(e.payload.repository ?? "primary"), e])).values()];
 
   // Rejects on failure, so the approval panel keeps the comment and shows the error.
   const decide = async (decision: GateDecision, comment: string) => {
@@ -114,7 +116,12 @@ export function RunPage(props: {
           {run.task.trust === "UNTRUSTED" && <span className="badge warn" title="Text from an external system">untrusted source</span>}
         </div>
         <Pipeline run={run} />
-        {pr && <p style={{ margin: 0 }}>Pull request: <a href={String(pr.payload.url)} target="_blank" rel="noreferrer">{String(pr.payload.url)}</a></p>}
+        {prs.map((pr) => (
+          <p key={String(pr.payload.url)} style={{ margin: 0 }}>
+            Pull request{pr.payload.alias ? ` (${String(pr.payload.alias)})` : ""}:{" "}
+            <a href={String(pr.payload.url)} target="_blank" rel="noreferrer">{String(pr.payload.url)}</a>
+          </p>
+        ))}
         {run.state === "NEEDS_HUMAN" && (
           <div className="alert attention">This run needs a human. Check the latest error below, fix the cause (e.g. configuration
             or repository access), then resume — it continues at {run.resumeState?.toLowerCase().replace(/_/g, " ")}.</div>

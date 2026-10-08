@@ -1,6 +1,7 @@
 package io.agenticsdlc.adapter.out.git;
 
 import io.agenticsdlc.config.WorkspacePaths;
+import io.agenticsdlc.core.domain.RepositoryRef;
 import io.agenticsdlc.core.domain.RunView;
 import io.agenticsdlc.core.domain.ScmKind;
 import io.agenticsdlc.core.scm.ChangePublisher;
@@ -66,6 +67,8 @@ public class JGitRepositoryCheckout implements RepositoryCheckout, ChangePublish
 
 	private static final Logger log = LoggerFactory.getLogger(JGitRepositoryCheckout.class);
 	private static final String SECTION = "agentic";
+	/** Where companion repositories' working copies live inside the primary one (ADR-0006). */
+	static final String COMPANIONS = ".repos";
 	private static final int MAX_INSTRUCTIONS_BYTES = 32_000;
 	private static final int MAX_CONFIG_BYTES = 16_384;
 	private static final int FILE_DEPTH = 4;
@@ -96,9 +99,35 @@ public class JGitRepositoryCheckout implements RepositoryCheckout, ChangePublish
 		return Mono.fromCallable(() -> commitAndPushBlocking(view, message)).subscribeOn(Schedulers.boundedElastic());
 	}
 
+	@Override
+	public Mono<List<RepositoryPush>> commitAndPushAll(RunView view, String message) {
+		return Mono.fromCallable(() -> {
+			List<RepositoryPush> pushes = new ArrayList<>();
+			for (Tree tree : java.util.stream.Stream.concat(Stream.of(primary(view)), companions(view).stream()).toList()) {
+				if (Files.isRegularFile(tree.gitDir().resolve("config")) && hasChanges(tree)) {
+					pushes.add(new RepositoryPush(tree.alias(), tree.repository(), commitAndPush(view, tree, message)));
+				}
+			}
+			return pushes;
+		}).subscribeOn(Schedulers.boundedElastic());
+	}
+
+	/** Uncommitted changes, or commits on the work branch beyond its base. */
+	private boolean hasChanges(Tree tree) throws IOException, GitAPIException {
+		try (Repository repository = open(tree); Git git = new Git(repository)) {
+			stageAll(git, repository);
+			String base = repository.getConfig().getString(SECTION, null, "baseCommit");
+			return !git.status().call().isClean() || !repository.resolve("HEAD").name().equals(base);
+		}
+	}
+
 	private PushedBranch commitAndPushBlocking(RunView view, String message) throws IOException, GitAPIException {
+		return commitAndPush(view, primary(view), message);
+	}
+
+	private PushedBranch commitAndPush(RunView view, Tree tree, String message) throws IOException, GitAPIException {
 		UUID runId = view.run().id();
-		try (Repository repository = open(runId); Git git = new Git(repository)) {
+		try (Repository repository = open(tree); Git git = new Git(repository)) {
 			String workBranch = "agent/" + runId;
 			if (!workBranch.equals(repository.getBranch())) {
 				throw new IllegalStateException("working copy of run " + runId + " is not on " + workBranch);
@@ -109,11 +138,11 @@ public class JGitRepositoryCheckout implements RepositoryCheckout, ChangePublish
 				git.commit().setMessage(message).setAuthor(now).setCommitter(now).setSign(false).setNoVerify(true).call();
 			}
 			String commit = repository.resolve("HEAD").name();
-			String url = rewrite(view.task().repository().cloneUrl().toString());
+			String url = rewrite(tree.repository().cloneUrl().toString());
 			Iterable<org.eclipse.jgit.transport.PushResult> results = git.push()
 					.setRemote(url)
 					.setRefSpecs(new org.eclipse.jgit.transport.RefSpec("refs/heads/" + workBranch + ":refs/heads/" + workBranch))
-					.setCredentialsProvider(credentials(view.task().repository().kind(), url))
+					.setCredentialsProvider(credentials(tree.repository().kind(), url))
 					.call();
 			for (org.eclipse.jgit.transport.PushResult result : results) {
 				for (org.eclipse.jgit.transport.RemoteRefUpdate update : result.getRemoteUpdates()) {
@@ -125,7 +154,7 @@ public class JGitRepositoryCheckout implements RepositoryCheckout, ChangePublish
 					}
 				}
 			}
-			log.info("pushed {} at {} for run {}", workBranch, commit, runId);
+			log.info("pushed {} at {} to {} for run {}", workBranch, commit, redact(url), runId);
 			return new PushedBranch(workBranch, repository.getConfig().getString(SECTION, null, "baseBranch"), commit);
 		}
 	}
@@ -154,38 +183,30 @@ public class JGitRepositoryCheckout implements RepositoryCheckout, ChangePublish
 
 		if (!Files.isRegularFile(gitDir.resolve("config")) || readConfig(gitDir, "baseCommit") == null) {
 			deleteRecursively(paths.runDir(runId));
-			Files.createDirectories(repoDir);
-			String url = rewrite(view.task().repository().cloneUrl().toString());
-			log.info("cloning {} for run {}", redact(url), runId);
-			CloneCommand clone = Git.cloneRepository()
-					.setURI(url)
-					.setDirectory(repoDir.toFile())
-					.setGitDir(gitDir.toFile())
-					.setCloneAllBranches(false)
-					.setCredentialsProvider(credentials(view.task().repository().kind(), url));
-			if (view.task().baseBranch() != null) {
-				clone.setBranch(view.task().baseBranch());
+			clone(view, primary(view));
+		}
+		// Companion working copies live inside the primary one; keep them out of its commits.
+		Path exclude = gitDir.resolve("info").resolve("exclude");
+		Files.createDirectories(exclude.getParent());
+		if (!Files.isRegularFile(exclude) || !Files.readString(exclude).contains("/" + COMPANIONS + "/")) {
+			Files.writeString(exclude, "\n/" + COMPANIONS + "/\n", StandardCharsets.UTF_8, java.nio.file.StandardOpenOption.CREATE,
+					java.nio.file.StandardOpenOption.APPEND);
+		}
+		List<CheckoutInfo.Companion> companions = new ArrayList<>();
+		for (Tree companion : companions(view)) {
+			if (!Files.isRegularFile(companion.gitDir().resolve("config")) || readConfig(companion.gitDir(), "baseCommit") == null) {
+				deleteRecursively(companion.workTree());
+				deleteRecursively(companion.gitDir());
+				clone(view, companion);
 			}
-			if (cloneDepth > 0) {
-				clone.setDepth(cloneDepth);
-			}
-			try (Git git = clone.call()) {
-				Repository repository = git.getRepository();
-				String baseBranch = repository.getBranch();
-				ObjectId head = repository.resolve("HEAD");
-				StoredConfig config = repository.getConfig();
-				// Never run hooks, even if a later step writes some into the git directory.
-				config.setString("core", null, "hooksPath", "/dev/null");
-				config.setString(SECTION, null, "baseBranch", baseBranch);
-				config.save();
-				// A run whose branch was already pushed (an open pull request being revised after its workspace was
-				// lost) continues from that branch; otherwise the work branch starts at the base.
-				ObjectId pushed = fetchWorkBranch(git, view, url, workBranch);
-				git.checkout().setCreateBranch(true).setName(workBranch)
-						.setStartPoint(pushed == null ? head.name() : pushed.name()).call();
-				// Last: a checkout interrupted before this point is redone from scratch.
-				config.setString(SECTION, null, "baseCommit", head.name());
-				config.save();
+			try (Repository repository = open(companion); RevWalk walk = new RevWalk(repository)) {
+				String baseCommit = repository.getConfig().getString(SECTION, null, "baseCommit");
+				RevTree tree = walk.parseCommit(ObjectId.fromString(baseCommit)).getTree();
+				String config = readBlob(repository, tree, ".agentic-sdlc.yml", MAX_CONFIG_BYTES, false);
+				companions.add(new CheckoutInfo.Companion(companion.alias(), companion.path(),
+						companion.repository().cloneUrl().toString(),
+						repository.getConfig().getString(SECTION, null, "baseBranch"), baseCommit, files(repository, tree),
+						config == null ? null : projectConfig(config)));
 			}
 		}
 
@@ -196,12 +217,98 @@ public class JGitRepositoryCheckout implements RepositoryCheckout, ChangePublish
 			String config = readBlob(repository, tree, ".agentic-sdlc.yml", MAX_CONFIG_BYTES, false);
 			return new CheckoutInfo(baseBranch, baseCommit, workBranch, rootEntries(repository, tree),
 					files(repository, tree), config == null ? null : projectConfig(config),
-					agentInstructions(repository, tree));
+					agentInstructions(repository, tree), companions);
 		}
 	}
 
+	/** One repository of a run: the primary ({@code alias} null) or a companion (ADR-0006). */
+	private record Tree(String alias, RepositoryRef repository, String baseBranch, Path workTree, Path gitDir) {
+		String path() {
+			return alias == null ? "." : COMPANIONS + "/" + alias;
+		}
+	}
+
+	private Tree primary(RunView view) {
+		UUID runId = view.run().id();
+		return new Tree(null, view.task().repository(), view.task().baseBranch(), paths.repo(runId), paths.gitDir(runId));
+	}
+
+	private List<Tree> companions(RunView view) {
+		UUID runId = view.run().id();
+		return view.task().companions().stream().map(c -> new Tree(c.alias(), c.repository(), c.baseBranch(),
+				paths.repo(runId).resolve(c.path()), paths.runDir(runId).resolve("git-repos").resolve(c.alias()))).toList();
+	}
+
+	/** Companions found on disk, for operations that only know the run id. */
+	private List<Tree> companionsOnDisk(UUID runId) throws IOException {
+		Path gitDirs = paths.runDir(runId).resolve("git-repos");
+		if (!Files.isDirectory(gitDirs)) {
+			return List.of();
+		}
+		try (Stream<Path> dirs = Files.list(gitDirs)) {
+			return dirs.sorted().map(dir -> new Tree(dir.getFileName().toString(), null, null,
+					paths.repo(runId).resolve(COMPANIONS).resolve(dir.getFileName().toString()), dir)).toList();
+		}
+	}
+
+	/**
+	 * Clones a repository of the run with a separate git directory, then creates the work branch: from the pushed
+	 * branch if the run already pushed one (a revision after the workspace was lost), else from the base.
+	 */
+	private void clone(RunView view, Tree tree) throws IOException, GitAPIException {
+		UUID runId = view.run().id();
+		String workBranch = "agent/" + runId;
+		Files.createDirectories(tree.workTree());
+		String url = rewrite(tree.repository().cloneUrl().toString());
+		log.info("cloning {} for run {}", redact(url), runId);
+		CloneCommand clone = Git.cloneRepository()
+				.setURI(url)
+				.setDirectory(tree.workTree().toFile())
+				.setGitDir(tree.gitDir().toFile())
+				.setCloneAllBranches(false)
+				.setCredentialsProvider(credentials(tree.repository().kind(), url));
+		if (tree.baseBranch() != null) {
+			clone.setBranch(tree.baseBranch());
+		}
+		if (cloneDepth > 0) {
+			clone.setDepth(cloneDepth);
+		}
+		try (Git git = clone.call()) {
+			Repository repository = git.getRepository();
+			String baseBranch = repository.getBranch();
+			ObjectId head = repository.resolve("HEAD");
+			StoredConfig config = repository.getConfig();
+			// Never run hooks, even if a later step writes some into the git directory.
+			config.setString("core", null, "hooksPath", "/dev/null");
+			config.setString(SECTION, null, "baseBranch", baseBranch);
+			config.setString(SECTION, null, "cloneUrl", tree.repository().cloneUrl().toString());
+			config.setString(SECTION, null, "scmKind", tree.repository().kind().name());
+			config.save();
+			ObjectId pushed = fetchWorkBranch(git, tree.repository(), url, workBranch);
+			git.checkout().setCreateBranch(true).setName(workBranch)
+					.setStartPoint(pushed == null ? head.name() : pushed.name()).call();
+			// Last: a checkout interrupted before this point is redone from scratch.
+			config.setString(SECTION, null, "baseCommit", head.name());
+			config.save();
+		}
+	}
+
+	/** The primary repository's diff, then each companion's with paths under its directory. */
 	private String diffBlocking(UUID runId) throws IOException, GitAPIException {
-		try (Repository repository = open(runId); Git git = new Git(repository)) {
+		StringBuilder diff = new StringBuilder();
+		try (Repository repository = open(runId)) {
+			diff.append(diff(repository, ""));
+		}
+		for (Tree companion : companionsOnDisk(runId)) {
+			try (Repository repository = open(companion)) {
+				diff.append(diff(repository, companion.path() + "/"));
+			}
+		}
+		return diff.toString();
+	}
+
+	private static String diff(Repository repository, String prefix) throws IOException, GitAPIException {
+		try (Git git = new Git(repository)) {
 			// Stage everything (respecting .gitignore) so new and deleted files show up; the index lives on the host.
 			stageAll(git, repository);
 			ObjectId base = ObjectId.fromString(repository.getConfig().getString(SECTION, null, "baseCommit"));
@@ -211,6 +318,8 @@ public class JGitRepositoryCheckout implements RepositoryCheckout, ChangePublish
 				CanonicalTreeParser baseTree = new CanonicalTreeParser();
 				baseTree.reset(reader, walk.parseCommit(base).getTree());
 				formatter.setRepository(repository);
+				formatter.setOldPrefix("a/" + prefix);
+				formatter.setNewPrefix("b/" + prefix);
 				formatter.format(formatter.scan(baseTree, new DirCacheIterator(repository.readDirCache())));
 			}
 			return out.toString(StandardCharsets.UTF_8);
@@ -218,12 +327,12 @@ public class JGitRepositoryCheckout implements RepositoryCheckout, ChangePublish
 	}
 
 	/** The tip of {@code workBranch} on the remote, fetched into the clone; null if the branch does not exist there. */
-	private ObjectId fetchWorkBranch(Git git, RunView view, String url, String workBranch) {
+	private ObjectId fetchWorkBranch(Git git, RepositoryRef repositoryRef, String url, String workBranch) {
 		String remoteRef = "refs/remotes/origin/" + workBranch;
 		try {
 			var fetch = git.fetch().setRemote(url)
 					.setRefSpecs(new org.eclipse.jgit.transport.RefSpec("+refs/heads/" + workBranch + ":" + remoteRef))
-					.setCredentialsProvider(credentials(view.task().repository().kind(), url));
+					.setCredentialsProvider(credentials(repositoryRef.kind(), url));
 			if (cloneDepth > 0) {
 				fetch.setDepth(cloneDepth);
 			}
@@ -262,6 +371,11 @@ public class JGitRepositoryCheckout implements RepositoryCheckout, ChangePublish
 				throw new NestedRepositoryException(entry.getPathString());
 			}
 		}
+	}
+
+	private static Repository open(Tree tree) throws IOException {
+		return new FileRepositoryBuilder().setGitDir(tree.gitDir().toFile()).setWorkTree(tree.workTree().toFile())
+				.setMustExist(true).build();
 	}
 
 	private Repository open(UUID runId) throws IOException {

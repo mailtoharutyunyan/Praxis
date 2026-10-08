@@ -41,7 +41,7 @@ Until now a run assumed one repository with one toolchain at its root: the build
   - `.repos/` is excluded from the primary repository.
   - Diffs and the PUBLISH fingerprint cover all repositories.
   - Publishing pushes and opens a pull request in each repository that changed, and cross-links them.
-  - Revisions and CI fixes work from any of the pull requests. The run is DONE when every pull request is merged, and CANCELLED when none is open and the primary pull request was not merged.
+  - Revisions and CI fixes work from any of the pull requests. The run is DONE when every pull request is merged, and CANCELLED once none is open but not all were merged.
 - **API contract changes.** Changes to API contract files (OpenAPI, AsyncAPI, protobuf, GraphQL, Avro) are flagged to the reviewer, at the gates and in the pull requests.
 
 ## Consequences

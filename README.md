@@ -109,6 +109,14 @@ sidecars:
 env:                                                                 # for every service's build
   SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/postgres
 ```
+**Changes across repositories.** A task can name **companion repositories**, for example an API's consumers, through `companions` in `POST /api/v1/tasks`, `companionRepositories` in the MCP `submit_task` tool, the UI's new-task dialog, or `agentic.jira.projects.<KEY>.companions`.
+- **Layout.** Each companion is checked out at `/workspace/.repos/<alias>/` with its own `agent/<run>` branch. The agent changes all repositories together, and the diff and the PUBLISH approval cover them all.
+- **Publishing.** Every repository that changed gets its own pull request. The pull requests reference one another and are cross-linked by a comment.
+- **Completion.** The run is DONE when all of them are merged, and CANCELLED once none is open but not all were merged.
+- **Feedback.** Review comments and CI failures on any of the pull requests send the run back for a revision.
+
+**API contracts.** A change to an OpenAPI, AsyncAPI, protobuf, GraphQL, Avro or WSDL file is flagged to the reviewer, at the gates ("Checks") and in the pull request, with a reminder to check consumers.
+
 Sidecars don't see the code and get no credentials. Testcontainers can't run inside the sandbox, because that would need the Docker socket; declare the same containers as sidecars and point the tests at them through `env`.
 
 SCM settings (`agentic.scm.*`):

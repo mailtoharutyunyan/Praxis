@@ -3,7 +3,6 @@ package io.agenticsdlc.core.memory;
 import java.net.URI;
 import java.time.Instant;
 import java.util.List;
-import java.util.Locale;
 import java.util.Objects;
 import java.util.UUID;
 
@@ -48,8 +47,6 @@ public record RepoFact(UUID id, String repository, String fact, List<Citation> c
 
 	/** One key per repository however its clone URL is spelled: host and path, lower case, without {@code .git}. */
 	public static String key(URI cloneUrl) {
-		String path = cloneUrl.getPath() == null ? "" : cloneUrl.getPath();
-		path = path.replaceAll("/+$", "").replaceAll("\\.git$", "");
-		return (cloneUrl.getHost() + path).toLowerCase(Locale.ROOT);
+		return new io.agenticsdlc.core.domain.RepositoryRef(io.agenticsdlc.core.domain.ScmKind.GITHUB, cloneUrl).key();
 	}
 }

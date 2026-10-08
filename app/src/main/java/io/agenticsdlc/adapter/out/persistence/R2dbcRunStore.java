@@ -291,9 +291,10 @@ class R2dbcRunStore implements RunStore {
 	private Mono<Void> insertTask(Task task) {
 		GenericExecuteSpec spec = db.sql("""
 				insert into tasks (id, origin, external_ref, title, description, scm_kind, clone_url, base_branch,
-				    trust, requested_by, idempotency_key, created_at)
+				    trust, requested_by, idempotency_key, created_at, companions)
 				values (:id, :origin, :externalRef, :title, :description, :scmKind, :cloneUrl, :baseBranch,
-				    :trust, :requestedBy, :idempotencyKey, :createdAt)""")
+				    :trust, :requestedBy, :idempotencyKey, :createdAt, :companions)""")
+				.bind("companions", Json.of(RunRows.companionsJson(task.companions())))
 				.bind("id", task.id())
 				.bind("origin", task.origin().name())
 				.bind("title", EventPayloadCodec.stripNul(task.title()))

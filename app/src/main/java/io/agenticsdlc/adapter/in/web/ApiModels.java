@@ -1,5 +1,7 @@
 package io.agenticsdlc.adapter.in.web;
 
+import io.agenticsdlc.core.domain.Companion;
+import io.agenticsdlc.core.domain.RepositoryRef;
 import io.agenticsdlc.core.domain.Gate;
 import io.agenticsdlc.core.domain.GateDecision;
 import io.agenticsdlc.core.domain.RiskLevel;
@@ -28,7 +30,25 @@ final class ApiModels {
 			@NotBlank @Size(max = Task.MAX_TITLE_LENGTH) String title,
 			@NotBlank @Size(max = Task.MAX_DESCRIPTION_LENGTH) String description,
 			@NotNull @Valid RepositoryRequest repository,
+			@Size(max = 255) String baseBranch,
+			@Valid @Size(max = Task.MAX_COMPANIONS) List<CompanionRequest> companions) {
+
+		/** Companion repositories as domain values; aliases default to the repository name. */
+		List<Companion> companionList() {
+			return companions == null ? List.of() : companions.stream().map(c -> {
+				RepositoryRef ref = new RepositoryRef(c.kind() == null ? repository.kind() : c.kind(), c.cloneUrl());
+				return new Companion(c.alias() == null || c.alias().isBlank() ? Companion.aliasFor(ref) : c.alias(), ref,
+						c.baseBranch());
+			}).toList();
+		}
+	}
+
+	/** Another repository changed in the same run (ADR-0006); {@code kind} defaults to the primary's. */
+	record CompanionRequest(@Size(max = 40) String alias, ScmKind kind, @NotNull URI cloneUrl,
 			@Size(max = 255) String baseBranch) {
+	}
+
+	record CompanionResponse(String alias, String scmKind, URI cloneUrl, String baseBranch) {
 	}
 
 	record RepositoryRequest(@NotNull ScmKind kind, @NotNull URI cloneUrl) {
@@ -63,7 +83,9 @@ final class ApiModels {
 					run.version(), run.createdAt(), run.updatedAt(),
 					new TaskResponse(task.id(), task.origin().name(), task.externalRef(), task.title(),
 							task.description(), task.repository().kind().name(), task.repository().cloneUrl(),
-							task.baseBranch(), task.trust().name(), task.requestedBy(), task.createdAt()));
+							task.baseBranch(), task.trust().name(), task.requestedBy(), task.createdAt(),
+							task.companions().stream().map(c -> new CompanionResponse(c.alias(), c.repository().kind().name(),
+									c.repository().cloneUrl(), c.baseBranch())).toList()));
 		}
 	}
 
@@ -72,7 +94,8 @@ final class ApiModels {
 	}
 
 	record TaskResponse(UUID id, String origin, String externalRef, String title, String description,
-			String scmKind, URI cloneUrl, String baseBranch, String trust, String requestedBy, Instant createdAt) {
+			String scmKind, URI cloneUrl, String baseBranch, String trust, String requestedBy, Instant createdAt,
+			List<CompanionResponse> companions) {
 	}
 
 	/** Pass both {@code next*} values back as {@code createdBefore} and {@code beforeId} for the next page. */

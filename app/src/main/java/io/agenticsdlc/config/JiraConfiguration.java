@@ -40,7 +40,13 @@ class JiraConfiguration {
 		Map<String, TicketIntake.ProjectTarget> projects = new LinkedHashMap<>();
 		properties.jira().projects().forEach((key, project) -> projects.put(key, new TicketIntake.ProjectTarget(
 				new RepositoryRef(project.kind(), project.cloneUrl()),
-				project.baseBranch().isBlank() ? null : project.baseBranch())));
+				project.baseBranch().isBlank() ? null : project.baseBranch(),
+				project.companions().stream().map(c -> {
+					RepositoryRef ref = new RepositoryRef(c.kind() == null ? project.kind() : c.kind(), c.cloneUrl());
+					return new io.agenticsdlc.core.domain.Companion(c.alias().isBlank()
+							? io.agenticsdlc.core.domain.Companion.aliasFor(ref) : c.alias(), ref,
+							c.baseBranch().isBlank() ? null : c.baseBranch());
+				}).toList())));
 		return new TicketIntake(jira, intake, TaskOrigin.JIRA, properties.jira().triggerLabel(), projects);
 	}
 

@@ -64,8 +64,15 @@ public final class PullRequestFeedback {
 			String body, String location, String url) {
 	}
 
-	/** A failed CI pipeline. {@code branch} is the pushed branch, {@code headSha} the commit it ran on. */
-	public record CiFailure(String source, String pipelineId, String branch, String headSha, String url) {
+	/**
+	 * A failed CI pipeline. {@code branch} is the pushed branch, {@code headSha} the commit it ran on, and
+	 * {@code repositoryUrl} the repository's web or clone URL (null: the task's primary repository).
+	 */
+	public record CiFailure(String source, String pipelineId, String branch, String headSha, String url,
+			String repositoryUrl) {
+		public CiFailure(String source, String pipelineId, String branch, String headSha, String url) {
+			this(source, pipelineId, branch, headSha, url, null);
+		}
 	}
 
 	public sealed interface Result {
@@ -92,11 +99,20 @@ public final class PullRequestFeedback {
 					if (view.run().state() != RunState.PR_OPEN) {
 						return ignored("the run is " + view.run().state() + ", not waiting on its pull request");
 					}
-					return pullRequests.canWrite(view, comment.authorKey()).flatMap(allowed -> !allowed
-							? ignored(comment.author() + " cannot push to this repository")
-							: revise(view, new RevisionRequest(comment.source(), comment.source() + ":comment:"
-									+ comment.commentId(), comment.author(), request, comment.location(), comment.url()),
-									comment.source() + ":" + comment.author(), "Revising this pull request as asked"));
+					return published(view).flatMap(all -> {
+						PullRequestArtifacts.Published on = all.stream()
+								.filter(p -> p.pullRequest().url().equals(comment.pullRequestUrl())).findFirst()
+								.orElse(all.getFirst());
+						var repository = on.pullRequest().repository() == null ? view.task().repository()
+								: on.pullRequest().repository();
+						String where = on.pullRequest().repository() == null ? "" : " (in " + repository.cloneUrl() + ")";
+						return pullRequests.canWrite(view, repository, comment.authorKey()).flatMap(allowed -> !allowed
+								? ignored(comment.author() + " cannot push to this repository")
+								: revise(view, new RevisionRequest(comment.source(), comment.source() + ":comment:"
+										+ comment.commentId(), comment.author(), request + where, comment.location(),
+										comment.url()), comment.source() + ":" + comment.author(), on.pullRequest(),
+										"Revising this pull request as asked"));
+					});
 				})
 				.switchIfEmpty(ignored("no run owns this pull request"));
 	}
@@ -114,21 +130,30 @@ public final class PullRequestFeedback {
 			return store.latestEvents(runId, Set.of(RunEventType.ARTIFACT_PRODUCED, RunEventType.REVISION_REQUESTED), 200)
 					.collectList()
 					.flatMap(events -> {
-						Optional<String> pushed = lastPullRequest(events).map(e -> String.valueOf(e.payload().get("commit")));
-						if (pushed.isEmpty() || !pushed.get().equalsIgnoreCase(failure.headSha())) {
+						List<PullRequestArtifacts.Published> all = PullRequestArtifacts.latest(events, view.task().repository());
+						String key = failure.repositoryUrl() == null ? view.task().repository().key()
+								: new io.agenticsdlc.core.domain.RepositoryRef(view.task().repository().kind(),
+										java.net.URI.create(failure.repositoryUrl())).key();
+						Optional<PullRequestArtifacts.Published> on = all.stream().filter(p -> p.repositoryKey().equals(key))
+								.findFirst();
+						if (on.isEmpty() || !on.get().commit().equalsIgnoreCase(failure.headSha())) {
 							return ignored("the pipeline ran on " + failure.headSha() + ", not the last pushed commit");
 						}
+						var repository = on.get().pullRequest().repository() == null ? view.task().repository()
+								: on.get().pullRequest().repository();
 						long ciFixes = events.stream().filter(e -> e.type() == RunEventType.REVISION_REQUESTED
 								&& "ci".equals(e.payload().get("source"))).count();
 						if (ciFixes >= maxCiFixes) {
 							return ignored("the run already had " + ciFixes + " CI fixes");
 						}
-						return pullRequests.failedJobs(view, failure.pipelineId()).flatMap(jobs -> jobs.isEmpty()
+						return pullRequests.failedJobs(view, repository, failure.pipelineId()).flatMap(jobs -> jobs.isEmpty()
 								? ignored("no failed jobs found in pipeline " + failure.pipelineId())
 								: revise(view, new RevisionRequest("ci", failure.source() + ":pipeline:"
-										+ failure.pipelineId(), failure.source() + " CI", ciRequest(failure, jobs), null,
-										failure.url()), ACTOR, "CI failed on " + abbreviateSha(failure.headSha())
-												+ "; revising this pull request to fix it"));
+										+ failure.pipelineId(), failure.source() + " CI", ciRequest(failure, jobs)
+												+ (on.get().pullRequest().repository() == null ? ""
+														: "\n(The failing pipeline is in " + repository.cloneUrl() + ".)"),
+										null, failure.url()), ACTOR, on.get().pullRequest(), "CI failed on "
+												+ abbreviateSha(failure.headSha()) + "; revising this pull request to fix it"));
 					});
 		}).switchIfEmpty(ignored("no run " + runId));
 	}
@@ -147,23 +172,19 @@ public final class PullRequestFeedback {
 		return text.toString();
 	}
 
-	private Mono<Result> revise(RunView view, RevisionRequest request, String actor, String reply) {
+	private Mono<Result> revise(RunView view, RevisionRequest request, String actor, PullRequests.PullRequest replyOn,
+			String reply) {
 		UUID runId = view.run().id();
 		return commands.requestRevision(runId, request, actor)
-				.then(store.latestEvents(runId, Set.of(RunEventType.ARTIFACT_PRODUCED), 100).collectList())
-				.flatMap(events -> lastPullRequest(events)
-						.map(pr -> pullRequests.comment(view, new PullRequests.PullRequest(
-								String.valueOf(pr.payload().get("id")), String.valueOf(pr.payload().get("url"))),
-								reply + " (run " + link(runId) + "). The changes are pushed after a maintainer approves them.")
-								.onErrorResume(e -> Mono.empty()))
-						.orElse(Mono.empty()))
+				.then(pullRequests.comment(view, replyOn, reply + " (run " + link(runId)
+						+ "). The changes are pushed after a maintainer approves them.").onErrorResume(e -> Mono.empty()))
 				.thenReturn((Result) new Result.Revising(runId));
 	}
 
-	private static Optional<RunEvent> lastPullRequest(List<RunEvent> events) {
-		return events.reversed().stream()
-				.filter(e -> e.type() == RunEventType.ARTIFACT_PRODUCED && PublishStage.PULL_REQUEST.equals(e.payload().get("kind")))
-				.findFirst();
+	private Mono<List<PullRequestArtifacts.Published>> published(RunView view) {
+		return store.latestEvents(view.run().id(), Set.of(RunEventType.ARTIFACT_PRODUCED), 200).collectList()
+				.map(events -> PullRequestArtifacts.latest(events, view.task().repository()))
+				.filter(all -> !all.isEmpty());
 	}
 
 	private String link(UUID runId) {

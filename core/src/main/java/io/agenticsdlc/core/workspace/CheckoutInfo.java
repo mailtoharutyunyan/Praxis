@@ -12,7 +12,20 @@ import java.util.Set;
  * @param agentInstructions contents of {@code AGENTS.md} or {@code CLAUDE.md} at the root, if present; null otherwise
  */
 public record CheckoutInfo(String baseBranch, String baseCommit, String workBranch, Set<String> rootEntries,
-		Set<String> files, ProjectConfig projectConfig, String agentInstructions) {
+		Set<String> files, ProjectConfig projectConfig, String agentInstructions, java.util.List<Companion> companions) {
+
+	/** A companion repository's working copy at {@code path} (ADR-0006), with its own files and settings. */
+	public record Companion(String alias, String path, String cloneUrl, String baseBranch, String baseCommit,
+			Set<String> files, ProjectConfig projectConfig) {
+		public Companion {
+			files = Set.copyOf(files);
+		}
+	}
+
+	public CheckoutInfo(String baseBranch, String baseCommit, String workBranch, Set<String> rootEntries,
+			Set<String> files, ProjectConfig projectConfig, String agentInstructions) {
+		this(baseBranch, baseCommit, workBranch, rootEntries, files, projectConfig, agentInstructions, java.util.List.of());
+	}
 
 	public CheckoutInfo {
 		Objects.requireNonNull(baseBranch, "baseBranch");
@@ -20,5 +33,6 @@ public record CheckoutInfo(String baseBranch, String baseCommit, String workBran
 		Objects.requireNonNull(workBranch, "workBranch");
 		rootEntries = Set.copyOf(rootEntries);
 		files = Set.copyOf(files);
+		companions = companions == null ? java.util.List.of() : java.util.List.copyOf(companions);
 	}
 }

@@ -209,8 +209,14 @@ public record AgenticProperties(@Valid @NotNull Worker worker, @Valid @NotNull L
 			@DefaultValue("30s") @NotNull Duration updateInterval) {
 	}
 
+	/** @param companions other repositories its tasks change too, e.g. API consumers (ADR-0006) */
 	public record JiraProject(@NotNull io.agenticsdlc.core.domain.ScmKind kind, @NotNull java.net.URI cloneUrl,
-			@DefaultValue("") String baseBranch) {
+			@DefaultValue("") String baseBranch, @DefaultValue({}) List<@Valid CompanionRepository> companions) {
+	}
+
+	/** A companion repository; the alias defaults to the repository name, the kind to the primary's. */
+	public record CompanionRepository(@DefaultValue("") String alias, io.agenticsdlc.core.domain.ScmKind kind,
+			@NotNull java.net.URI cloneUrl, @DefaultValue("") String baseBranch) {
 	}
 
 	/**

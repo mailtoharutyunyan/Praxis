@@ -51,6 +51,37 @@ public record BuildPlan(List<Component> components, List<ProjectConfig.SidecarCo
 		}
 	}
 
+	/**
+	 * This plan for a repository whose working copy is at {@code directory}, e.g. a companion at {@code .repos/web}:
+	 * paths are prefixed, and names too unless the repository is a single service, which takes {@code alias}.
+	 */
+	public BuildPlan within(String directory, String alias) {
+		List<Component> moved = components.stream().map(c -> new Component(
+				c.path().equals(".") ? name(alias) : name(alias + "-" + c.name()),
+				c.path().equals(".") ? directory : directory + "/" + c.path(), c.profile())).toList();
+		return new BuildPlan(moved, sidecars, env);
+	}
+
+	/** Components of both plans (names made unique); this plan's sidecars and environment win. */
+	public BuildPlan plus(BuildPlan other) {
+		List<Component> all = new ArrayList<>(components);
+		java.util.Set<String> names = new HashSet<>(components.stream().map(Component::name).toList());
+		for (Component c : other.components()) {
+			String name = c.name();
+			for (int i = 2; names.contains(name); i++) {
+				name = c.name() + "-" + i;
+			}
+			names.add(name);
+			all.add(new Component(name, c.path(), c.profile()));
+		}
+		List<ProjectConfig.SidecarConfig> allSidecars = new ArrayList<>(sidecars);
+		other.sidecars().stream().filter(s -> sidecars.stream().noneMatch(mine -> mine.name().equals(s.name())))
+				.forEach(allSidecars::add);
+		Map<String, String> allEnv = new LinkedHashMap<>(other.env());
+		allEnv.putAll(env);
+		return new BuildPlan(all, allSidecars, allEnv);
+	}
+
 	/** The component agents' plain commands run in: the root one, else the first. */
 	public Component main() {
 		return components.getFirst();

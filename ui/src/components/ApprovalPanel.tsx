@@ -37,7 +37,7 @@ export function ApprovalPanel(props: {
   const [error, setError] = useState<string | null>(null);
   const tabs = useMemo(() => ([
     ["spec", "Specification", spec], ["critique", "Spec check", critique], ["tests", "Tests first", tests],
-    ["diff", "Changes", diff], ["scan", "Security", scan], ["review", "Review", review],
+    ["diff", "Changes", diff], ["scan", "Checks", scan], ["review", "Review", review],
   ] as const).filter(([, , artifact]) => artifact !== undefined), [spec, critique, tests, diff, scan, review]);
 
   const decide = async (decision: GateDecision) => {
@@ -94,7 +94,7 @@ export function ApprovalPanel(props: {
           {tab === "diff" && diff && <DiffView diff={String(diff.payload.content ?? "")} />}
           {tab === "scan" && scan && (
             <>
-              <p className="muted small">Secret and dependency scans of the changed files (gitleaks, OSV-Scanner).</p>
+              <p className="muted small">Secret and dependency scans of the changed files, and API contract changes.</p>
               <Markdown source={String(scan.payload.content ?? "")} />
             </>
           )}

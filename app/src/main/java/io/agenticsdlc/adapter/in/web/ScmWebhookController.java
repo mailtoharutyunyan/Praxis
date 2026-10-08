@@ -71,7 +71,8 @@ class ScmWebhookController {
 				JsonNode run = payload.path("workflow_run");
 				yield action.equals("completed") && "failure".equals(run.path("conclusion").asString(""))
 						? ci(new CiFailure("github", run.path("id").asString(), run.path("head_branch").asString(""),
-								run.path("head_sha").asString(""), run.path("html_url").asString("")))
+								run.path("head_sha").asString(""), run.path("html_url").asString(""),
+								payload.path("repository").path("html_url").asString(null)))
 						: ignored("not a failed workflow run");
 			}
 			default -> ignored("event " + event + " is not used");
@@ -101,7 +102,8 @@ class ScmWebhookController {
 			case "Pipeline Hook" -> "failed".equals(attributes.path("status").asString(""))
 					? ci(new CiFailure("gitlab", attributes.path("id").asString(), attributes.path("ref").asString(""),
 							attributes.path("sha").asString(""), payload.path("project").path("web_url").asString("")
-									+ "/-/pipelines/" + attributes.path("id").asString()))
+									+ "/-/pipelines/" + attributes.path("id").asString(),
+							payload.path("project").path("web_url").asString(null)))
 					: ignored("not a failed pipeline");
 			default -> ignored("event " + event + " is not used");
 		};

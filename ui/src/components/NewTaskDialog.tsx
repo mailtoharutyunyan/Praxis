@@ -27,6 +27,8 @@ export function NewTaskDialog({ api, onCreated }: { api: Api; onCreated: (run: R
         description: String(data.get("description")),
         repository: { kind, cloneUrl: String(data.get("cloneUrl")) },
         baseBranch: String(data.get("baseBranch") || "") || undefined,
+        companions: String(data.get("companions") || "").split(/\s+/).filter((url) => url.startsWith("https://"))
+          .map((cloneUrl) => ({ cloneUrl })),
       }, idempotencyKey);
       dialog.current?.close();
       form.reset();
@@ -63,6 +65,9 @@ export function NewTaskDialog({ api, onCreated }: { api: Api; onCreated: (run: R
             </label>
           </div>
           <label>Base branch<input name="baseBranch" placeholder="default branch" /></label>
+          <label>Also change these repositories (optional, one clone URL per line)
+            <textarea name="companions" rows={2} placeholder="e.g. the API's consumers; each gets its own pull request" />
+          </label>
           {error && <div className="alert error" role="alert">{error}</div>}
           <div className="row">
             <span className="spacer" />
