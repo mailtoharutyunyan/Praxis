@@ -218,6 +218,7 @@ export function RunPage(props: {
               <dt>Gates</dt><dd>{run.gates.join(", ") || "—"}</dd>
               <dt>Source</dt><dd>{run.task.origin.toLowerCase().replace(/_/g, " ")}</dd>
               <dt>Requested by</dt><dd>{run.task.requestedBy}</dd>
+              {run.task.reviewPlan && <><dt>Plan review</dt><dd>Plan review requested</dd></>}
             </dl>
           </section>
           <section className="card">

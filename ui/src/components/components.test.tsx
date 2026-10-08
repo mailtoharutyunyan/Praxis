@@ -1,9 +1,10 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { ApiError } from "../lib/api";
+import { ApiError, type Api } from "../lib/api";
 import type { Run, RunEvent } from "../lib/types";
 import { ApprovalPanel } from "./ApprovalPanel";
 import { DiffView } from "./DiffView";
+import { NewTaskDialog } from "./NewTaskDialog";
 import { ProgressBar } from "./ProgressBar";
 import { RevisionPanel } from "./RevisionPanel";
 import { Timeline } from "./Timeline";
@@ -15,7 +16,7 @@ const run: Run = {
   createdAt: "2026-10-08T10:00:00Z", updatedAt: "2026-10-08T10:01:00Z",
   task: { id: "t", origin: "PROMPT", externalRef: null, title: "Add search", description: "d", scmKind: "GITHUB",
     cloneUrl: "https://github.com/acme/shop.git", baseBranch: null, trust: "TRUSTED", requestedBy: "alice",
-    createdAt: "2026-10-08T10:00:00Z" },
+    createdAt: "2026-10-08T10:00:00Z", reviewPlan: false },
   progress: { percent: 87, phase: "Waiting for approval: PUBLISH gate", step: 6, steps: 9, activity: "", waiting: true, finished: false },
 };
 
@@ -109,6 +110,44 @@ describe("RevisionPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: "Request changes" }));
     await waitFor(() => expect(box.value).toBe(""));
     expect(onRequest).toHaveBeenLastCalledWith("Use a constant", "src/App.java:4");
+  });
+});
+
+describe("NewTaskDialog", () => {
+  const fill = (container: HTMLElement) => {
+    const field = (name: string) => container.querySelector(`[name="${name}"]`) as HTMLInputElement;
+    fireEvent.change(field("title"), { target: { value: "Add a /ping endpoint" } });
+    fireEvent.change(field("description"), { target: { value: "Return pong" } });
+    fireEvent.change(field("cloneUrl"), { target: { value: "https://github.com/acme/shop.git" } });
+  };
+
+  it("asks for plan review by default and sends the checkbox state", async () => {
+    // jsdom may lack the dialog methods.
+    HTMLDialogElement.prototype.showModal = vi.fn();
+    HTMLDialogElement.prototype.close = vi.fn();
+    const submit = vi.fn().mockResolvedValue(run);
+    const onCreated = vi.fn();
+    const { container } = render(<NewTaskDialog api={{ submit } as unknown as Api} onCreated={onCreated} />);
+
+    const box = container.querySelector('input[name="reviewPlan"]') as HTMLInputElement;
+    expect(box).not.toBeNull();
+    expect(box.type).toBe("checkbox");
+    expect(box.checked).toBe(true);
+    expect(box.closest("label")).toHaveTextContent("Review the plan before coding");
+
+    const form = container.querySelector("form") as HTMLFormElement;
+    fill(container);
+    fireEvent.submit(form);
+    await waitFor(() => expect(onCreated).toHaveBeenCalledTimes(1));
+    expect(submit).toHaveBeenLastCalledWith(expect.objectContaining({ reviewPlan: true }), expect.any(String));
+
+    expect(box.checked).toBe(true);
+    fill(container);
+    fireEvent.click(box);
+    expect(box.checked).toBe(false);
+    fireEvent.submit(form);
+    await waitFor(() => expect(onCreated).toHaveBeenCalledTimes(2));
+    expect(submit).toHaveBeenLastCalledWith(expect.objectContaining({ reviewPlan: false }), expect.any(String));
   });
 });
 

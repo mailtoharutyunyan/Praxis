@@ -291,9 +291,9 @@ class R2dbcRunStore implements RunStore {
 	private Mono<Void> insertTask(Task task) {
 		GenericExecuteSpec spec = db.sql("""
 				insert into tasks (id, origin, external_ref, title, description, scm_kind, clone_url, base_branch,
-				    trust, requested_by, idempotency_key, created_at, companions)
+				    trust, requested_by, idempotency_key, created_at, companions, review_plan)
 				values (:id, :origin, :externalRef, :title, :description, :scmKind, :cloneUrl, :baseBranch,
-				    :trust, :requestedBy, :idempotencyKey, :createdAt, :companions)""")
+				    :trust, :requestedBy, :idempotencyKey, :createdAt, :companions, :reviewPlan)""")
 				.bind("companions", Json.of(RunRows.companionsJson(task.companions())))
 				.bind("id", task.id())
 				.bind("origin", task.origin().name())
@@ -303,7 +303,8 @@ class R2dbcRunStore implements RunStore {
 				.bind("cloneUrl", task.repository().cloneUrl().toString())
 				.bind("trust", task.trust().name())
 				.bind("requestedBy", task.requestedBy())
-				.bind("createdAt", timestamp(task.createdAt()));
+				.bind("createdAt", timestamp(task.createdAt()))
+				.bind("reviewPlan", task.reviewPlan());
 		spec = bindNullable(spec, "externalRef", task.externalRef(), String.class);
 		spec = bindNullable(spec, "baseBranch", task.baseBranch(), String.class);
 		spec = bindNullable(spec, "idempotencyKey", task.idempotencyKey(), String.class);

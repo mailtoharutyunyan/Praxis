@@ -100,7 +100,8 @@ class McpServerTest {
 		JsonNode submit = tools.valueStream().filter(t -> t.path("name").asString().equals("submit_task")).findFirst()
 				.orElseThrow();
 		assertThat(submit.path("inputSchema").path("required").valueStream().map(JsonNode::asString).toList())
-				.contains("title", "description", "cloneUrl", "repositoryKind").doesNotContain("baseBranch");
+				.contains("title", "description", "cloneUrl", "repositoryKind").doesNotContain("baseBranch", "reviewPlan");
+		assertThat(submit.path("inputSchema").path("properties").has("reviewPlan")).isTrue();
 		assertThat(tools.valueStream().filter(t -> t.path("name").asString().equals("get_run")).findFirst().orElseThrow()
 				.path("annotations").path("readOnlyHint").asBoolean()).isTrue();
 	}

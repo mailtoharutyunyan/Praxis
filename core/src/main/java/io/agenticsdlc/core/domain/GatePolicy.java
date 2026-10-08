@@ -8,7 +8,8 @@ import java.util.Set;
 /**
  * The set of gates a run must pass. {@link Gate#PUBLISH} is always included; the rest scale with risk.
  * Untrusted task text adds the {@link Gate#SPEC} gate so a human confirms what the agent will do
- * before it acts on text an outsider wrote. Iteration order is the gate declaration order.
+ * before it acts on text an outsider wrote. A task that asks for plan review also gets {@link Gate#SPEC}.
+ * Neither rule ever removes a gate. Iteration order is the gate declaration order.
  */
 public record GatePolicy(Set<Gate> gates) {
 
@@ -21,6 +22,10 @@ public record GatePolicy(Set<Gate> gates) {
 	}
 
 	public static GatePolicy forRisk(RiskLevel risk, Trust trust) {
+		return forRisk(risk, trust, false);
+	}
+
+	public static GatePolicy forRisk(RiskLevel risk, Trust trust, boolean reviewPlan) {
 		Objects.requireNonNull(risk, "risk");
 		Objects.requireNonNull(trust, "trust");
 		EnumSet<Gate> gates = switch (risk) {
@@ -28,7 +33,7 @@ public record GatePolicy(Set<Gate> gates) {
 			case MEDIUM -> EnumSet.of(Gate.SPEC, Gate.PUBLISH);
 			case HIGH -> EnumSet.allOf(Gate.class);
 		};
-		if (trust == Trust.UNTRUSTED) {
+		if (trust == Trust.UNTRUSTED || reviewPlan) {
 			gates.add(Gate.SPEC);
 		}
 		return new GatePolicy(gates);

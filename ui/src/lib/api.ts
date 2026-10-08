@@ -14,6 +14,8 @@ export interface NewTask {
   baseBranch?: string;
   /** Other repositories changed in the same run, e.g. an API's consumers; each gets its own pull request. */
   companions?: { cloneUrl: string }[];
+  /** Stop for a human to review the specification even when triage rates the task low risk. */
+  reviewPlan?: boolean;
 }
 
 /** Typed client for /api/v1. Every call carries the session's bearer token. */

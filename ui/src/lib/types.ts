@@ -29,6 +29,7 @@ export interface TaskInfo {
   trust: "TRUSTED" | "UNTRUSTED";
   requestedBy: string;
   createdAt: string;
+  reviewPlan: boolean;
 }
 
 export interface Run {

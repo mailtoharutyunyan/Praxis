@@ -132,6 +132,29 @@ class RunApiTest {
 	}
 
 	@Test
+	@SuppressWarnings("unchecked")
+	void planReviewStopsLowRiskRunAtSpecGate() {
+		Map<String, Object> body = new java.util.HashMap<>(task("[low] Add ping"));
+		body.put("reviewPlan", true);
+		Object id = client.mutateWith(user("alice", "operator")).post().uri("/api/v1/tasks").bodyValue(body)
+				.exchange().expectStatus().isCreated()
+				.expectBody(new ParameterizedTypeReference<Map<String, Object>>() {
+				}).returnResult().getResponseBody().get("id");
+
+		Map<String, Object> atSpec = awaitRun(id, waitingAt("SPEC"));
+		assertThat(atSpec.get("risk")).isEqualTo("LOW");
+		assertThat(atSpec.get("gates")).isEqualTo(List.of("SPEC", "PUBLISH"));
+		assertThat(((Map<String, Object>) atSpec.get("task")).get("reviewPlan")).isEqualTo(true);
+	}
+
+	@Test
+	@SuppressWarnings("unchecked")
+	void planReviewDefaultsToFalse() {
+		Map<String, Object> created = submit("[low] Add pong");
+		assertThat(((Map<String, Object>) created.get("task")).get("reviewPlan")).isEqualTo(false);
+	}
+
+	@Test
 	void decisionOnWrongGateIsConflict() {
 		Object id = submit("[medium] wrong gate").get("id");
 		awaitRun(id, waitingAt("SPEC"));
@@ -228,6 +251,12 @@ class RunApiTest {
 						"repository", Map.of("kind", "GITHUB", "cloneUrl", "http://insecure.example/repo.git")))
 				.exchange().expectStatus().isBadRequest()
 				.expectBody().jsonPath("$.detail").isEqualTo("cloneUrl must use https");
+
+		client.mutateWith(user("o", "operator")).post().uri("/api/v1/tasks")
+				.bodyValue(Map.of("title", "t", "description", "d", "reviewPlan", "yes",
+						"repository", Map.of("kind", "GITHUB", "cloneUrl", "https://github.com/acme/shop.git")))
+				.exchange().expectStatus().isBadRequest()
+				.expectHeader().contentType(MediaType.APPLICATION_PROBLEM_JSON);
 
 		// Parameter constraints are request errors (400 problem details), not server errors.
 		client.mutateWith(user("v", "viewer")).get().uri("/api/v1/runs?limit=0").exchange()

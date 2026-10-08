@@ -12,6 +12,7 @@ import java.util.UUID;
  * @param idempotencyKey client-supplied key; a repeated submission with the same key and requester
  *        returns the original task instead of creating a second one. Null when not supplied.
  * @param companions other repositories changed in the same run (ADR-0006); empty for most tasks
+ * @param reviewPlan the requester asked to review the specification even when triage rates the task low risk
  */
 public record Task(
 		UUID id,
@@ -25,7 +26,8 @@ public record Task(
 		String requestedBy,
 		String idempotencyKey,
 		Instant createdAt,
-		java.util.List<Companion> companions) {
+		java.util.List<Companion> companions,
+		boolean reviewPlan) {
 
 	public static final int MAX_COMPANIONS = 10;
 
@@ -63,6 +65,13 @@ public record Task(
 			Instant createdAt) {
 		this(id, origin, externalRef, title, description, repository, baseBranch, trust, requestedBy, idempotencyKey,
 				createdAt, java.util.List.of());
+	}
+
+	public Task(UUID id, TaskOrigin origin, String externalRef, String title, String description,
+			RepositoryRef repository, String baseBranch, Trust trust, String requestedBy, String idempotencyKey,
+			Instant createdAt, java.util.List<Companion> companions) {
+		this(id, origin, externalRef, title, description, repository, baseBranch, trust, requestedBy, idempotencyKey,
+				createdAt, companions, false);
 	}
 
 	private static String requireText(String value, String name, int maxLength) {

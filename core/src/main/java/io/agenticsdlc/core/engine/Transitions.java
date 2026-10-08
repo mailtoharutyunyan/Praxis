@@ -62,7 +62,7 @@ public final class Transitions {
 					recorder.fail("handler for " + stage + " returned a triage result");
 				}
 				else {
-					GatePolicy policy = GatePolicy.forRisk(t.risk(), task.trust());
+					GatePolicy policy = GatePolicy.forRisk(t.risk(), task.trust(), task.reviewPlan());
 					recorder.triaged(t, policy);
 					recorder.moveTo(RunState.PREPARING_CONTEXT);
 				}

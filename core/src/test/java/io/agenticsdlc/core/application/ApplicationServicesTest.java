@@ -38,6 +38,11 @@ class ApplicationServicesTest {
 		return intake.submit(Fixtures.prompt(requester)).block().view().run().id();
 	}
 
+	private static NewTask withPlanReview(NewTask t) {
+		return new NewTask(t.origin(), t.externalRef(), t.title(), t.description(), t.repository(), t.baseBranch(),
+				t.requestedBy(), t.idempotencyKey(), t.companions(), true);
+	}
+
 	/** Puts a run directly into the given gate, bypassing the worker. */
 	private Run parkAt(UUID runId, RiskLevel risk, Gate gate) {
 		Run run = store.run(runId);
@@ -98,6 +103,26 @@ class ApplicationServicesTest {
 			NewTask blank = new NewTask(io.agenticsdlc.core.domain.TaskOrigin.PROMPT, null, " ", "d", Fixtures.REPO,
 					null, "alice", null);
 			StepVerifier.create(intake.submit(blank)).expectError(IllegalArgumentException.class).verify();
+		}
+
+		@Test
+		void planReviewIsStoredWithTheTask() {
+			RunStore.Submission submission = intake.submit(withPlanReview(Fixtures.prompt("alice"))).block();
+			assertThat(submission.view().task().reviewPlan()).isTrue();
+			assertThat(store.find(submission.view().run().id()).block().task().reviewPlan()).isTrue();
+			assertThat(store.allEvents(submission.view().run().id())).singleElement()
+					.satisfies(e -> assertThat(e.payload()).containsEntry("reviewPlan", true));
+		}
+
+		@Test
+		void planReviewDefaultsToFalse() {
+			assertThat(Fixtures.prompt("alice").reviewPlan()).isFalse();
+			assertThat(new NewTask(io.agenticsdlc.core.domain.TaskOrigin.PROMPT, null, "t", "d", Fixtures.REPO, null,
+					"alice", null, List.of()).reviewPlan()).isFalse();
+			RunStore.Submission submission = intake.submit(Fixtures.prompt("alice")).block();
+			assertThat(submission.view().task().reviewPlan()).isFalse();
+			assertThat(store.allEvents(submission.view().run().id())).singleElement()
+					.satisfies(e -> assertThat(e.payload()).doesNotContainKey("reviewPlan"));
 		}
 
 		private NewTask withKey(NewTask t, String key) {
@@ -168,6 +193,20 @@ class ApplicationServicesTest {
 			Run raised = commands.raiseRisk(runId, RiskLevel.HIGH, "touches auth", "bob").block();
 			assertThat(raised.gatePolicy().gates()).containsExactly(Gate.SPEC, Gate.IMPLEMENTATION, Gate.PUBLISH);
 			assertThat(store.allEvents(runId).getLast().type()).isEqualTo(RunEventType.RISK_RAISED);
+		}
+
+		@Test
+		void raiseRiskOnPlanReviewRunKeepsSpecGate() {
+			UUID runId = intake.submit(withPlanReview(Fixtures.prompt("alice"))).block().view().run().id();
+			Run run = store.run(runId);
+			Run parked = run.transitionTo(RunState.TRIAGING, T0)
+					.triaged(RiskLevel.LOW, GatePolicy.forRisk(RiskLevel.LOW, Trust.TRUSTED, true), T0)
+					.transitionTo(RunState.PREPARING_CONTEXT, T0).transitionTo(RunState.SPECIFYING, T0)
+					.awaitApproval(Gate.SPEC, T0);
+			store.update(run, parked, List.of()).block();
+
+			Run raised = commands.raiseRisk(runId, RiskLevel.HIGH, "touches auth", "bob").block();
+			assertThat(raised.gatePolicy().gates()).containsExactly(Gate.SPEC, Gate.IMPLEMENTATION, Gate.PUBLISH);
 		}
 
 		@Test
@@ -310,7 +349,7 @@ class ApplicationServicesTest {
 		assertThat(RunCommands.samePerson("alice", "alice", Set.of())).isTrue();
 		assertThat(RunCommands.samePerson("jira:alice@acme.com", "0f3c-sub", Set.of("Alice@Acme.com"))).isTrue();
 		assertThat(RunCommands.samePerson("jira:admin", "sub-1", Set.of("admin"))).isTrue();
-		assertThat(RunCommands.samePerson("jira:5b10ac8d82e05b22cc7d4ef5", "sub-1", Set.of("bob@acme.com"))).isFalse();
+		assertThat(RunCommands.samePerson("jira:account-id-of-bob", "sub-1", Set.of("bob@acme.com"))).isFalse();
 		assertThat(RunCommands.samePerson("bob", "alice", Set.of("alice@acme.com"))).isFalse();
 	}
 }
