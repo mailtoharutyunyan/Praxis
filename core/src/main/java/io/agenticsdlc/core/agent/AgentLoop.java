@@ -85,6 +85,7 @@ public final class AgentLoop {
 			long tokenBudget) {
 		ModelRequest request = new ModelRequest(system, compact(state.messages()), specs, limits.maxOutputTokens());
 		return model.complete(request).flatMap(reply -> {
+			context.recordSpend(reply.usage());
 			Usage usage = state.usage().plus(reply.usage());
 			int turns = state.turns() + 1;
 			Mono<Void> said = reply.text().isBlank() ? Mono.empty()

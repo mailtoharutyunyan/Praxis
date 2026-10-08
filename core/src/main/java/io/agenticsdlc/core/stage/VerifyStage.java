@@ -41,7 +41,8 @@ public final class VerifyStage implements StageHandler {
 						// The verified diff is what the IMPLEMENTATION gate shows the approver.
 						return workspace.diff(context)
 								.flatMap(diff -> context.emit(RunEventType.ARTIFACT_PRODUCED, "system",
-										Map.of("kind", RunHistory.DIFF, "content", diff)))
+										Map.of("kind", RunHistory.DIFF, RunHistory.FINGERPRINT, RunHistory.fingerprint(diff),
+												"content", diff)))
 								.thenReturn((StageOutcome) new StageOutcome.Completed(Usage.ZERO,
 										Map.of("commands", results.size(), "result", "PASSED")));
 					}

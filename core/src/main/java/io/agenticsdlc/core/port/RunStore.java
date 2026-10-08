@@ -44,7 +44,10 @@ public interface RunStore {
 	/** Persist {@code next} if {@code current} is still the stored version; returns the stored instance. */
 	Mono<Run> update(Run current, Run next, List<RunEvent> events);
 
-	/** Append progress events without changing the run. Only the current lease owner may append. */
+	/**
+	 * Append progress events without changing the run. Only the current lease owner may append, and only while the run
+	 * is in a working state, so a cancelled run's worker fails here with {@code LeaseLostException}.
+	 */
 	Mono<Void> append(UUID runId, String leaseOwner, List<RunEvent> events);
 
 	/** Events with {@code seq > afterSeq}, oldest first. */
@@ -53,7 +56,7 @@ public interface RunStore {
 	/** Lease one working run whose lease is free or expired; empty if none is available. */
 	Mono<Run> claim(String owner, Duration lease);
 
-	/** Extend a lease still held by {@code owner}; emits false if it was lost. */
+	/** Extend a lease still held by {@code owner}; emits false if it was lost or the run left its working states. */
 	Mono<Boolean> renewLease(UUID runId, String owner, Duration lease);
 
 	Mono<Void> releaseLease(UUID runId, String owner);

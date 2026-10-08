@@ -8,27 +8,37 @@ import io.agenticsdlc.core.engine.StageContext;
 import io.agenticsdlc.core.engine.StageHandler;
 import io.agenticsdlc.core.engine.StageOutcome;
 import io.agenticsdlc.core.stage.RunHistory;
+import io.agenticsdlc.core.workspace.RepositoryCheckout;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import reactor.core.publisher.Mono;
 
 /**
  * PUBLISHING: runs only after a human approved the PUBLISH gate. Commits and pushes the work branch, opens (or finds)
  * the pull request, and records it as a {@code pull-request} artifact. Both steps are idempotent, so a retry after a
- * lost lease never creates a second branch or pull request.
+ * lost lease never creates a second branch or pull request. Each external write is preceded by a progress event, which
+ * the store refuses once the run was cancelled or the lease lost, so a cancel stops publishing.
+ * <p>
+ * Only the diff a human approved is published: the working copy's diff must match the fingerprint of the last diff
+ * artifact (shown at the PUBLISH gate). Otherwise, for example after the workspace was lost with a dead node, the run
+ * escalates instead of pushing something nobody reviewed.
  */
 public final class PublishStage implements StageHandler {
 
 	public static final String PULL_REQUEST = "pull-request";
+	static final String ACTOR = "system:publisher";
 	static final int MAX_BODY_CHARS = 60_000;
 
 	private final ChangePublisher publisher;
 	private final PullRequests pullRequests;
+	private final RepositoryCheckout checkout;
 
-	public PublishStage(ChangePublisher publisher, PullRequests pullRequests) {
+	public PublishStage(ChangePublisher publisher, PullRequests pullRequests, RepositoryCheckout checkout) {
 		this.publisher = Objects.requireNonNull(publisher, "publisher");
 		this.pullRequests = Objects.requireNonNull(pullRequests, "pullRequests");
+		this.checkout = Objects.requireNonNull(checkout, "checkout");
 	}
 
 	@Override
@@ -39,10 +49,27 @@ public final class PublishStage implements StageHandler {
 	@Override
 	public Mono<StageOutcome> execute(StageContext context) {
 		Task task = context.task();
-		return context.history().map(RunHistory::new).flatMap(history -> publisher
-				.commitAndPush(context.view(), commitMessage(context))
-				.flatMap(pushed -> pullRequests.open(context.view(), new PullRequests.OpenRequest(pushed.branch(),
-						pushed.baseBranch(), title(task), body(context, history)))
+		return Mono.zip(context.history().map(RunHistory::new), checkout.diff(context.run().id()))
+				.flatMap(tuple -> {
+					RunHistory history = tuple.getT1();
+					String diff = tuple.getT2();
+					if (diff.isBlank() || !history.latestDiffFingerprint().equals(
+							Optional.of(RunHistory.fingerprint(diff)))) {
+						return Mono.just((StageOutcome) new StageOutcome.Escalate("the working copy no longer matches "
+								+ "the diff approved at the PUBLISH gate (it may have been lost or changed); request "
+								+ "changes to re-implement, or cancel the run", Usage.ZERO));
+					}
+					return publish(context, task, history);
+				});
+	}
+
+	private Mono<StageOutcome> publish(StageContext context, Task task, RunHistory history) {
+		// Deferred: the external writes must not even start unless the fence event before them was accepted.
+		return progress(context, "Pushing the work branch.")
+				.then(Mono.defer(() -> publisher.commitAndPush(context.view(), commitMessage(context))))
+				.flatMap(pushed -> progress(context, "Opening the pull request for " + pushed.branch() + ".")
+						.then(Mono.defer(() -> pullRequests.open(context.view(), new PullRequests.OpenRequest(
+								pushed.branch(), pushed.baseBranch(), title(task), body(context, history)))))
 						.flatMap(pr -> {
 							Map<String, Object> payload = new LinkedHashMap<>();
 							payload.put("kind", PULL_REQUEST);
@@ -54,7 +81,11 @@ public final class PublishStage implements StageHandler {
 							return context.emit(RunEventType.ARTIFACT_PRODUCED, "system", payload)
 									.thenReturn((StageOutcome) new StageOutcome.Completed(Usage.ZERO,
 											Map.of("pullRequest", pr.url(), "commit", pushed.commit())));
-						})));
+						}));
+	}
+
+	private static Mono<Void> progress(StageContext context, String message) {
+		return context.emit(RunEventType.AGENT_MESSAGE, ACTOR, Map.of("text", message));
 	}
 
 	static String title(Task task) {

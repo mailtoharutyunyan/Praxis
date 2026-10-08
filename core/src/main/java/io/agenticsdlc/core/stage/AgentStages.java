@@ -133,7 +133,7 @@ public final class AgentStages {
 							"\n\nSpecification:\n<spec>\n").append(spec).append("\n</spec>"));
 					appendRepository(brief, tuple.getT1());
 					brief.append("\n\nReview the current changes (show_diff).");
-					return artifact(context, RunHistory.DIFF, diff, Map.of())
+					return artifact(context, RunHistory.DIFF, diff, Map.of(RunHistory.FINGERPRINT, RunHistory.fingerprint(diff)))
 							.then(loop(AgentRole.REVIEWER, tools.readOnlyTools(), loopLimits)
 									.run(context, "agent:reviewer", Prompts.REVIEWER, brief.toString(),
 											remainingTokens(context)))

@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { ApiError } from "../lib/api";
 import type { GateDecision, Run, RunEvent } from "../lib/types";
 import { DiffView } from "./DiffView";
 import { Markdown } from "./Markdown";
@@ -30,15 +31,20 @@ export function ApprovalPanel(props: {
   const [tab, setTab] = useState<Tab>(initial);
   const [comment, setComment] = useState("");
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const tabs = useMemo(() => ([
     ["spec", "Specification", spec], ["diff", "Changes", diff], ["review", "Review", review],
   ] as const).filter(([, , artifact]) => artifact !== undefined), [spec, diff, review]);
 
   const decide = async (decision: GateDecision) => {
     setBusy(true);
+    setError(null);
     try {
       await onDecide(decision, comment);
       setComment("");
+    } catch (e) {
+      // Keep the comment, so the approver can retry without retyping it.
+      setError(e instanceof ApiError ? e.message : "The decision could not be sent. Try again.");
     } finally {
       setBusy(false);
     }
@@ -73,6 +79,7 @@ export function ApprovalPanel(props: {
           <label>Comment (sent to the agent when you request changes)
             <textarea value={comment} onChange={(e) => setComment(e.target.value)} placeholder="Optional" />
           </label>
+          {error && <div className="alert error" role="alert">{error}</div>}
           <div className="row">
             <button className="primary" disabled={busy} onClick={() => decide("APPROVE")}>Approve</button>
             <button disabled={busy || !comment.trim()} onClick={() => decide("REQUEST_CHANGES")}

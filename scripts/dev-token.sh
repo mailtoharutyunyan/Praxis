@@ -22,6 +22,6 @@ now=$(date +%s)
 roles_json=$(printf '%s' "$ROLES" | jq -R 'split(",")')
 header=$(printf '{"alg":"RS256","typ":"JWT"}' | b64url)
 payload=$(jq -cn --arg sub "$SUBJECT" --argjson roles "$roles_json" --argjson iat "$now" \
-  '{sub: $sub, roles: $roles, iat: $iat, exp: ($iat + 3600), iss: "agentic-sdlc-dev"}' | b64url)
+  '{sub: $sub, roles: $roles, iat: $iat, exp: ($iat + 3600), iss: "agentic-sdlc-dev", aud: "agentic-sdlc"}' | b64url)
 signature=$(printf '%s.%s' "$header" "$payload" | openssl dgst -sha256 -sign "$KEY" | b64url)
 printf '%s.%s.%s\n' "$header" "$payload" "$signature"

@@ -50,7 +50,7 @@ class SandboxToolsTest {
 
 	@ParameterizedTest
 	@CsvSource({ "src/App.java,src/App.java", "/workspace/src/App.java,src/App.java", "./a/../b.txt,b.txt",
-			"'',.", "/workspace,." })
+			"'',.", "/workspace,.", "-delete,./-delete", "/workspace/-rf,./-rf", "a/-x,a/-x" })
 	void acceptsWorkspacePaths(String input, String expected) {
 		assertThat(WorkspacePath.relative(input)).isEqualTo(expected);
 	}
@@ -118,6 +118,8 @@ class SandboxToolsTest {
 		assertThat(sandbox.commands.getLast()).contains("-e 'it'\"'\"'s'").contains("-- '.'");
 		assertThat(call(named("list_files"), Map.of("max_depth", 50))).isEqualTo("(empty)");
 		assertThat(sandbox.commands.getLast()).contains("-maxdepth 6");
+		call(named("list_files"), Map.of("path", "-delete"));
+		assertThat(sandbox.commands.getLast()).contains("find './-delete' ").doesNotContain("find '-delete'");
 		assertThat(call(named("show_diff"), Map.of())).isEqualTo("No changes yet.");
 	}
 

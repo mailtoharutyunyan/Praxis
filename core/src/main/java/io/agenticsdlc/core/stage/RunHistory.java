@@ -2,6 +2,10 @@ package io.agenticsdlc.core.stage;
 
 import io.agenticsdlc.core.domain.RunEvent;
 import io.agenticsdlc.core.domain.RunEventType;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -12,6 +16,8 @@ public record RunHistory(List<RunEvent> events) {
 	public static final String SPEC = "spec";
 	public static final String DIFF = "diff";
 	public static final String REVIEW = "review";
+	/** Payload key of a diff artifact's SHA-256, so publishing can prove it pushes exactly the approved diff. */
+	public static final String FINGERPRINT = "sha256";
 
 	public RunHistory {
 		events = List.copyOf(events);
@@ -23,6 +29,25 @@ public record RunHistory(List<RunEvent> events) {
 				.filter(e -> e.type() == RunEventType.ARTIFACT_PRODUCED && kind.equals(e.payload().get("kind")))
 				.map(e -> Objects.toString(e.payload().get("content"), ""))
 				.findFirst();
+	}
+
+	/** Fingerprint of the most recent diff artifact, if it has one. */
+	public Optional<String> latestDiffFingerprint() {
+		return events.reversed().stream()
+				.filter(e -> e.type() == RunEventType.ARTIFACT_PRODUCED && DIFF.equals(e.payload().get("kind")))
+				.findFirst()
+				.map(e -> e.payload().get(FINGERPRINT))
+				.map(Object::toString);
+	}
+
+	public static String fingerprint(String content) {
+		try {
+			return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+					.digest(content.getBytes(StandardCharsets.UTF_8)));
+		}
+		catch (NoSuchAlgorithmException e) {
+			throw new IllegalStateException(e);
+		}
 	}
 
 	/** The latest gate decision, if it asked for changes: who and what they wrote. */

@@ -13,6 +13,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicLong;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
@@ -20,9 +21,10 @@ import reactor.core.publisher.Mono;
  * Advances runs one stage at a time: claim a run (lease), run its stage handler while renewing the lease,
  * store the outcome as decided by {@link Transitions}, release the lease.
  * <p>
- * Failure handling: a handler error or timeout escalates the run to a human rather than retrying blindly.
- * Losing the lease or a concurrent change (cancel, another worker) abandons the step without writing; the
- * store's version fencing guarantees a stale worker cannot overwrite newer state.
+ * Failure handling: a handler error or timeout escalates the run to a human rather than retrying blindly, keeping
+ * the tokens the stage already spent. Losing the lease or a concurrent change (cancel, another worker) abandons the
+ * step without writing; the store's version fencing guarantees a stale worker cannot overwrite newer state. A failed
+ * renewal (e.g. a database blip) is tolerated until the lease would have expired.
  */
 public final class RunWorker {
 
@@ -69,8 +71,17 @@ public final class RunWorker {
 
 	private Mono<Void> process(Run claimed) {
 		long started = clock.millis();
+		AtomicLong renewedAt = new AtomicLong(started);
 		Mono<Boolean> leaseLost = Flux.interval(lease.dividedBy(3))
-				.concatMap(tick -> store.renewLease(claimed.id(), owner, lease))
+				// A slow renewal must not overflow the ticker; skipped ticks are harmless.
+				.onBackpressureDrop()
+				.concatMap(tick -> store.renewLease(claimed.id(), owner, lease)
+						.doOnNext(held -> {
+							if (held) {
+								renewedAt.set(clock.millis());
+							}
+						})
+						.onErrorResume(e -> Mono.just(clock.millis() - renewedAt.get() < lease.toMillis())), 1)
 				.filter(held -> !held)
 				.next();
 
@@ -91,7 +102,11 @@ public final class RunWorker {
 					return Mono.empty();
 				})
 				.then(Mono.defer(() -> store.releaseLease(claimed.id(), owner)))
-				.onErrorResume(e -> Mono.empty());
+				.onErrorResume(e -> Mono.empty())
+				// Cancelled (e.g. shutdown): hand the run over now rather than when the lease expires.
+				.doOnCancel(() -> store.releaseLease(claimed.id(), owner).subscribe(ignored -> {
+				}, e -> {
+				}));
 	}
 
 	private Mono<Run> step(RunView view) {
@@ -111,7 +126,8 @@ public final class RunWorker {
 		if (handler == null) {
 			return Mono.just(new StageOutcome.Escalate("no handler is configured for stage " + run.state(), Usage.ZERO));
 		}
-		return Mono.defer(() -> handler.execute(new StageContext(view, store, owner, clock)))
+		StageContext context = new StageContext(view, store, owner, clock);
+		return Mono.defer(() -> handler.execute(context))
 				.switchIfEmpty(Mono.error(() -> new IllegalStateException(
 						"handler for " + run.state() + " completed without an outcome")))
 				.timeout(limits.stageTimeout())
@@ -120,7 +136,8 @@ public final class RunWorker {
 					String reason = e instanceof TimeoutException
 							? "stage " + run.state() + " did not finish within " + limits.stageTimeout()
 							: "stage " + run.state() + " failed: " + e.getClass().getSimpleName() + ": " + e.getMessage();
-					return Mono.just(new StageOutcome.Escalate(reason, Usage.ZERO));
+					// Tokens already spent still count against the run's budget.
+					return Mono.just(new StageOutcome.Escalate(reason, context.spent()));
 				});
 	}
 }

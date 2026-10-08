@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+import { ApiError } from "../lib/api";
 import type { Run, RunEvent } from "../lib/types";
 import { ApprovalPanel } from "./ApprovalPanel";
 import { DiffView } from "./DiffView";
@@ -38,6 +39,23 @@ describe("ApprovalPanel", () => {
     fireEvent.change(screen.getByPlaceholderText("Optional"), { target: { value: "rename the field" } });
     fireEvent.click(screen.getByRole("button", { name: "Request changes" }));
     await waitFor(() => expect(onDecide).toHaveBeenCalledWith("REQUEST_CHANGES", "rename the field"));
+  });
+
+  it("keeps the comment and shows the error when the decision fails, clears it on success", async () => {
+    const onDecide = vi.fn()
+      .mockRejectedValueOnce(new ApiError(409, { title: "Conflict", detail: "The gate was already decided." }))
+      .mockResolvedValueOnce(undefined);
+    render(<ApprovalPanel run={run} events={artifacts} canApprove onDecide={onDecide} />);
+    const comment = screen.getByPlaceholderText("Optional");
+
+    fireEvent.change(comment, { target: { value: "rename the field" } });
+    fireEvent.click(screen.getByRole("button", { name: "Request changes" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("The gate was already decided.");
+    expect(comment).toHaveValue("rename the field");
+
+    fireEvent.click(screen.getByRole("button", { name: "Request changes" }));
+    await waitFor(() => expect(comment).toHaveValue(""));
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 
   it("hides decisions from non-approvers", () => {

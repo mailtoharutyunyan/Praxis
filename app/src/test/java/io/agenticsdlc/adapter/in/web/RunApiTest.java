@@ -201,7 +201,11 @@ class RunApiTest {
 				.bodyValue(Map.of("risk", "HIGH", "reason", "x")).exchange().expectStatus().isForbidden();
 		client.mutateWith(user("o", "operator")).delete().uri("/api/v1/runs/{id}", UUID.randomUUID()).exchange()
 				.expectStatus().isForbidden();
-		client.get().uri("/actuator/health").exchange().expectStatus().isOk();
+		client.get().uri("/actuator/health").exchange().expectStatus().isOk()
+				.expectHeader().valueEquals("X-Frame-Options", "SAMEORIGIN")
+				.expectHeader().value("Content-Security-Policy", csp -> assertThat(csp).contains("frame-ancestors 'self'"));
+		// Public like the rest of the UI shell; 404 here only because tests run without the built UI.
+		client.get().uri("/silent-renew.html").exchange().expectStatus().isNotFound();
 	}
 
 	@Test

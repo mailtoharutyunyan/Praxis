@@ -22,7 +22,8 @@ const DEV_TOKEN_KEY = "agentic.devToken";
 
 export async function loadConfig(): Promise<UiConfig> {
   const response = await fetch("/ui-config.json");
-  if (!response.ok) return { authMode: "dev", rolesClaim: "roles" };
+  // Never fall back to developer mode: an outage or misconfiguration must not change how users sign in.
+  if (!response.ok) throw new Error(`/ui-config.json returned HTTP ${response.status}.`);
   return (await response.json()) as UiConfig;
 }
 
@@ -88,25 +89,46 @@ export function devSession(config: UiConfig, onChange: () => void): Session {
   };
 }
 
-/** OIDC authorization code flow with PKCE; tokens are kept in session storage and renewed silently. */
-export async function oidcSession(config: UiConfig, onChange: () => void): Promise<Session> {
+/** Same-origin page the silent-renew iframe returns to (see silent-renew.html); also registered at the provider. */
+const SILENT_RENEW_PATH = "/silent-renew.html";
+
+// One UserManager per page: each instance runs its own renew timer and event listeners, and an authorization
+// code can be redeemed only once. Re-renders and repeated calls reuse it.
+let shared: { manager: UserManager; ready: Promise<void> } | null = null;
+let notify: () => void = () => undefined;
+
+function userManager(config: UiConfig): { manager: UserManager; ready: Promise<void> } {
+  if (shared) return shared;
+  if (!config.issuer || !config.clientId) throw new Error("OIDC is enabled, but /ui-config.json has no issuer or clientId.");
   const manager = new UserManager({
-    authority: config.issuer!,
-    client_id: config.clientId!,
+    authority: config.issuer,
+    client_id: config.clientId,
     redirect_uri: window.location.origin + "/",
+    silent_redirect_uri: window.location.origin + SILENT_RENEW_PATH,
     post_logout_redirect_uri: window.location.origin + "/",
     scope: config.scope ?? "openid profile",
     response_type: "code",
+    // Renews with the refresh token when the provider issues one, otherwise in a same-origin iframe.
     automaticSilentRenew: true,
     userStore: new WebStorageStateStore({ store: window.sessionStorage }),
   });
+  manager.events.addUserLoaded(() => notify());
+  manager.events.addUserUnloaded(() => notify());
   const params = new URLSearchParams(window.location.search);
-  if (params.has("code") && params.has("state")) {
-    await manager.signinRedirectCallback();
-    window.history.replaceState({}, document.title, window.location.pathname + window.location.hash);
-  }
-  manager.events.addUserLoaded(onChange);
-  manager.events.addUserUnloaded(onChange);
+  const ready = params.has("state") && (params.has("code") || params.has("error"))
+    ? manager.signinRedirectCallback().then(() => {
+      window.history.replaceState({}, document.title, window.location.pathname + window.location.hash);
+    })
+    : Promise.resolve();
+  shared = { manager, ready };
+  return shared;
+}
+
+/** OIDC authorization code flow with PKCE; tokens are kept in session storage and renewed silently. */
+export async function oidcSession(config: UiConfig, onChange: () => void): Promise<Session> {
+  const { manager, ready } = userManager(config);
+  notify = onChange;
+  await ready;
   const user = await manager.getUser();
   const token = user && !user.expired ? user.access_token : null;
   const payload = claims(token);

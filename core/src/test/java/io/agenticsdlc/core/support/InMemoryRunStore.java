@@ -33,6 +33,7 @@ public final class InMemoryRunStore implements RunStore, RunChangeSignals {
 	private final Map<UUID, List<RunEvent>> events = new LinkedHashMap<>();
 	private final Map<UUID, Lease> leases = new LinkedHashMap<>();
 	private final Sinks.Many<UUID> changes = Sinks.many().multicast().directBestEffort();
+	private int renewalFailures;
 
 	private record Lease(String owner, Instant expiresAt) {
 	}
@@ -104,7 +105,7 @@ public final class InMemoryRunStore implements RunStore, RunChangeSignals {
 	@Override
 	public synchronized Mono<Void> append(UUID runId, String leaseOwner, List<RunEvent> newEvents) {
 		Lease lease = leases.get(runId);
-		if (lease == null || !lease.owner().equals(leaseOwner)) {
+		if (lease == null || !lease.owner().equals(leaseOwner) || !runs.get(runId).state().isWorking()) {
 			return Mono.error(new LeaseLostException(runId, leaseOwner));
 		}
 		appendLocked(runId, newEvents);
@@ -134,8 +135,12 @@ public final class InMemoryRunStore implements RunStore, RunChangeSignals {
 
 	@Override
 	public synchronized Mono<Boolean> renewLease(UUID runId, String owner, Duration lease) {
+		if (renewalFailures > 0) {
+			renewalFailures--;
+			return Mono.error(new IllegalStateException("simulated database error"));
+		}
 		Lease held = leases.get(runId);
-		if (held == null || !held.owner().equals(owner)) {
+		if (held == null || !held.owner().equals(owner) || !runs.get(runId).state().isWorking()) {
 			return Mono.just(false);
 		}
 		leases.put(runId, new Lease(owner, clock.instant().plus(lease)));
@@ -157,6 +162,15 @@ public final class InMemoryRunStore implements RunStore, RunChangeSignals {
 	}
 
 	/** Test hook: take a lease away, as if it expired and another worker claimed the run. */
+	/** The next {@code count} renewals fail as if the database were briefly unreachable. */
+	public synchronized void failRenewals(int count) {
+		renewalFailures = count;
+	}
+
+	public synchronized int pendingRenewalFailures() {
+		return renewalFailures;
+	}
+
 	public synchronized void stealLease(UUID runId, String newOwner) {
 		leases.put(runId, new Lease(newOwner, clock.instant().plusSeconds(60)));
 		Run run = runs.get(runId);

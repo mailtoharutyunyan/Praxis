@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Api } from "../lib/api";
 import type { Run, RunState } from "../lib/types";
 import { NewTaskDialog } from "../components/NewTaskDialog";
@@ -29,21 +29,34 @@ export function RunsPage({ api, canSubmit, navigate }: { api: Api; canSubmit: bo
   const [runs, setRuns] = useState<Run[]>([]);
   const [error, setError] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
-    try {
-      const page = await api.listRuns(FILTERS.find((f) => f.key === filter)!.states, 100);
-      setRuns(page.items);
-      setError(null);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not load runs.");
-    }
-  }, [api, filter]);
+  const issued = useRef(0);
+  const applied = useRef(0);
 
   useEffect(() => {
+    // Aborted when the filter changes or the page unmounts, so a slow response never shows another filter's runs.
+    const controller = new AbortController();
+    const states = FILTERS.find((f) => f.key === filter)!.states;
+    const load = async () => {
+      // Polls can overlap: an older response never replaces a newer one.
+      const ticket = ++issued.current;
+      try {
+        const page = await api.listRuns(states, 100, undefined, controller.signal);
+        if (controller.signal.aborted || ticket < applied.current) return;
+        applied.current = ticket;
+        setRuns(page.items);
+        setError(null);
+      } catch (e) {
+        if (controller.signal.aborted || ticket < applied.current) return;
+        setError(e instanceof Error ? e.message : "Could not load runs.");
+      }
+    };
     void load();
     const timer = setInterval(() => void load(), 5000);
-    return () => clearInterval(timer);
-  }, [load]);
+    return () => {
+      controller.abort();
+      clearInterval(timer);
+    };
+  }, [api, filter]);
 
   return (
     <div className="stack">

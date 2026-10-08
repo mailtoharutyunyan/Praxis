@@ -19,7 +19,10 @@ import io.agenticsdlc.core.domain.Trust;
 import io.agenticsdlc.core.engine.StageContext;
 import io.agenticsdlc.core.engine.StageOutcome;
 import io.agenticsdlc.core.support.Fixtures;
+import io.agenticsdlc.core.stage.RunHistory;
 import io.agenticsdlc.core.support.InMemoryRunStore;
+import io.agenticsdlc.core.workspace.CheckoutInfo;
+import io.agenticsdlc.core.workspace.RepositoryCheckout;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -53,7 +56,28 @@ class PublishingTest {
 			return Mono.just(remoteState);
 		}
 	};
+	private String workingDiff = "+the approved change";
+	private final RepositoryCheckout checkout = new RepositoryCheckout() {
+		@Override
+		public Mono<CheckoutInfo> checkout(RunView view) {
+			return Mono.empty();
+		}
+
+		@Override
+		public Mono<String> diff(UUID id) {
+			return Mono.just(workingDiff);
+		}
+
+		@Override
+		public Mono<Void> remove(UUID id) {
+			return Mono.empty();
+		}
+	};
 	private UUID runId;
+
+	private PublishStage stage() {
+		return new PublishStage(publisher, pullRequests, checkout);
+	}
 
 	@BeforeEach
 	void setUp() {
@@ -69,6 +93,8 @@ class PublishingTest {
 				.decide(Gate.PUBLISH, GateDecision.APPROVE, T0);
 		store.update(run, publishing, List.of(
 				RunEvent.of(runId, RunEventType.ARTIFACT_PRODUCED, "system", Map.of("kind", "spec", "content", "THE SPEC"), T0),
+				RunEvent.of(runId, RunEventType.ARTIFACT_PRODUCED, "system", Map.of("kind", "diff", "sha256",
+						RunHistory.fingerprint(workingDiff), "content", workingDiff), T0),
 				RunEvent.of(runId, RunEventType.ARTIFACT_PRODUCED, "system", Map.of("kind", "review",
 						"content", "VERDICT: APPROVE"), T0))).block();
 	}
@@ -80,7 +106,7 @@ class PublishingTest {
 
 	@Test
 	void pushesOpensPullRequestAndRecordsIt() {
-		StageOutcome outcome = new PublishStage(publisher, pullRequests).execute(context()).block();
+		StageOutcome outcome = stage().execute(context()).block();
 
 		assertThat(outcome).isInstanceOfSatisfying(StageOutcome.Completed.class,
 				c -> assertThat(c.summary()).containsEntry("pullRequest", "https://github.com/acme/shop/pull/42"));
@@ -97,10 +123,32 @@ class PublishingTest {
 	}
 
 	@Test
+	void onlyTheApprovedDiffIsPublished() {
+		workingDiff = "+something nobody reviewed";
+		assertThat(stage().execute(context()).block()).isInstanceOfSatisfying(StageOutcome.Escalate.class,
+				e -> assertThat(e.reason()).contains("no longer matches the diff approved"));
+		workingDiff = "";
+		assertThat(stage().execute(context()).block()).isInstanceOf(StageOutcome.Escalate.class);
+		assertThat(pushes).isEmpty();
+		assertThat(opened).isEmpty();
+	}
+
+	@Test
+	void cancellingStopsPublishingBeforeThePush() {
+		StageContext context = context();
+		Run current = store.run(runId);
+		store.update(current, current.transitionTo(RunState.CANCELLED, T0), List.of()).block();
+
+		org.assertj.core.api.Assertions.assertThatThrownBy(() -> stage().execute(context).block())
+				.isInstanceOf(io.agenticsdlc.core.port.LeaseLostException.class);
+		assertThat(pushes).isEmpty();
+	}
+
+	@Test
 	void trackerFinishesRunsWhenThePullRequestIsMergedOrClosed() {
 		RunCommands commands = new RunCommands(store, CLOCK, false);
 		PullRequestTracker tracker = new PullRequestTracker(store, pullRequests, commands);
-		new PublishStage(publisher, pullRequests).execute(context()).block();
+		stage().execute(context()).block();
 		Run published = store.run(runId);
 		store.update(published, published.transitionTo(RunState.PR_OPEN, T0), List.of()).block();
 		store.releaseLease(runId, "w").block();
@@ -118,7 +166,7 @@ class PublishingTest {
 	@Test
 	void closedWithoutMergeCancels() {
 		RunCommands commands = new RunCommands(store, CLOCK, false);
-		new PublishStage(publisher, pullRequests).execute(context()).block();
+		stage().execute(context()).block();
 		Run published = store.run(runId);
 		store.update(published, published.transitionTo(RunState.PR_OPEN, T0), List.of()).block();
 		remoteState = PullRequests.PullRequestState.CLOSED;

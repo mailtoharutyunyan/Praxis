@@ -26,9 +26,15 @@ public record AgenticProperties(@Valid @NotNull Worker worker, @Valid @NotNull L
 	 * @param concurrency runs processed in parallel by this instance
 	 * @param pollInterval idle wait before looking for claimable runs again
 	 * @param lease how long a claimed run stays reserved without a heartbeat
+	 * @param nodeId stable name of this instance; runs stay on the node holding their workspace. Empty uses the host
+	 *        name, which suits one instance per host or a Kubernetes StatefulSet with a persistent workspace volume
+	 * @param nodeTimeout after this long without a heartbeat a node is presumed dead and its runs move to other nodes
+	 * @param drainTimeout on shutdown, how long in-flight stages may finish before they are cancelled and handed over
 	 */
 	public record Worker(@DefaultValue("true") boolean enabled, @DefaultValue("4") @Min(1) @Max(64) int concurrency,
-			@DefaultValue("1s") @NotNull Duration pollInterval, @DefaultValue("60s") @NotNull Duration lease) {
+			@DefaultValue("1s") @NotNull Duration pollInterval, @DefaultValue("60s") @NotNull Duration lease,
+			@DefaultValue("") String nodeId, @DefaultValue("90s") @NotNull Duration nodeTimeout,
+			@DefaultValue("20s") @NotNull Duration drainTimeout) {
 	}
 
 	public record Limits(@DefaultValue("3") @Min(0) int maxFixIterations, @DefaultValue("2") @Min(0) int maxReviewLoops,
@@ -73,12 +79,19 @@ public record AgenticProperties(@Valid @NotNull Worker worker, @Valid @NotNull L
 	 * @param workspaceRoot host directory holding each run's checkout ({@code <root>/<runId>/repo}) and git metadata
 	 *        ({@code <root>/<runId>/git}, never mounted into the sandbox)
 	 * @param dockerHost Docker endpoint; empty uses {@code DOCKER_HOST} or the platform default socket
-	 * @param network container network mode; {@code none} isolates fully but then dependencies cannot be downloaded
-	 * @param user {@code uid:gid} to run as; empty uses the owner of the workspace root so files stay writable
+	 * @param network container network: {@code none} (default) isolates fully; to download dependencies, attach an
+	 *        internal network whose only way out is {@code egressProxy} (see {@code dev/egress}). {@code bridge} gives
+	 *        unrestricted egress, including cloud metadata and internal hosts; {@code host} is refused
+	 * @param egressProxy allowlisting HTTP proxy, e.g. {@code http://egress:3128}, exported to builds as
+	 *        {@code HTTP(S)_PROXY}, JVM proxy properties and a Maven global settings file; empty for none
+	 * @param noProxy hosts reached without the proxy
+	 * @param user {@code uid:gid} to run as; empty uses the owner of the workspace root so files stay writable. Never
+	 *        root: the workspace is bind-mounted from the host
 	 * @param maxOutputChars per command; longer output keeps its head and tail
 	 */
 	public record Sandbox(@DefaultValue("false") boolean enabled, @NotNull java.nio.file.Path workspaceRoot,
-			@DefaultValue("") String dockerHost, @DefaultValue("bridge") @NotBlank String network,
+			@DefaultValue("") String dockerHost, @DefaultValue("none") @NotBlank String network,
+			@DefaultValue("") String egressProxy, @DefaultValue("localhost,127.0.0.1") String noProxy,
 			@DefaultValue("4GB") @NotNull org.springframework.util.unit.DataSize memory,
 			@DefaultValue("2") @DecimalMin("0.1") double cpus, @DefaultValue("1024") @Min(64) long pidsLimit,
 			@DefaultValue("") String user, @DefaultValue("20m") @NotNull Duration commandTimeout,

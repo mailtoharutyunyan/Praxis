@@ -161,6 +161,60 @@ class RunWorkerTest {
 	}
 
 	@Test
+	void failedStageStillChargesWhatItSpent() {
+		UUID runId = submit();
+		Usage spent = new Usage(1_000, 200, 0, 0, 5_000);
+		List<StageHandler> handlers = new ArrayList<>(happyPath(RiskLevel.LOW));
+		handlers.removeIf(h -> h.stage() == RunState.PREPARING_CONTEXT);
+		handlers.add(handler(RunState.PREPARING_CONTEXT, ctx -> {
+			ctx.recordSpend(spent);
+			return Mono.never();
+		}));
+		RunLimits quick = new RunLimits(3, 2, 1_000_000, 5_000_000, Duration.ofMillis(50));
+
+		drain(new RunWorker(store, handlers, quick, CLOCK, "worker-1", LEASE, listener));
+
+		assertThat(store.run(runId).state()).isEqualTo(RunState.NEEDS_HUMAN);
+		assertThat(store.run(runId).usage()).isEqualTo(spent);
+	}
+
+	@Test
+	void cancellingARunStopsItsWorker() {
+		UUID runId = submit();
+		worker(List.of()).processNext().block(); // RECEIVED -> TRIAGING
+		AtomicInteger emitted = new AtomicInteger();
+		RunWorker worker = worker(List.of(handler(RunState.TRIAGING, ctx -> {
+			Run current = store.run(runId);
+			store.update(current, current.transitionTo(RunState.CANCELLED, Fixtures.T0), List.of()).block();
+			return ctx.emit(RunEventType.AGENT_MESSAGE, "agent", Map.of("text", "still working"))
+					.doOnSuccess(v -> emitted.incrementAndGet())
+					.thenReturn(new StageOutcome.Triaged(RiskLevel.LOW, "late", Usage.ZERO));
+		})));
+
+		worker.processNext().block();
+
+		assertThat(emitted).hasValue(0);
+		assertThat(store.run(runId).state()).isEqualTo(RunState.CANCELLED);
+		assertThat(abandoned).containsExactly("TRIAGING:LeaseLostException");
+		assertThat(store.renewLease(runId, "worker-1", LEASE).block()).isFalse();
+	}
+
+	@Test
+	void aFailedLeaseRenewalIsToleratedWhileTheLeaseIsStillValid() {
+		UUID runId = submit();
+		worker(List.of()).processNext().block(); // RECEIVED -> TRIAGING
+		store.failRenewals(1);
+		RunWorker worker = worker(List.of(handler(RunState.TRIAGING, ctx -> Mono.delay(Duration.ofMillis(1_500))
+				.thenReturn(new StageOutcome.Triaged(RiskLevel.MEDIUM, "ok", Usage.ZERO)))));
+
+		worker.processNext().block();
+
+		assertThat(store.pendingRenewalFailures()).isZero();
+		assertThat(abandoned).isEmpty();
+		assertThat(store.run(runId).risk()).isEqualTo(RiskLevel.MEDIUM);
+	}
+
+	@Test
 	void missingHandlerEscalates() {
 		UUID runId = submit();
 		drain(worker(List.of()));

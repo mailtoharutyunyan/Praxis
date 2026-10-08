@@ -79,6 +79,12 @@ class WorkspaceConfiguration {
 
 	@Bean
 	SandboxJanitor sandboxJanitor(DockerClient docker, RunStore store, Sandbox sandbox, RepositoryCheckout checkout) {
-		return new SandboxJanitor(docker, store, sandbox, checkout, Duration.ofMinutes(5));
+		return new SandboxJanitor(docker, store, sandbox, checkout);
+	}
+
+	/** Per node: each instance cleans the sandboxes and workspaces on its own Docker host and disk. */
+	@Bean
+	PeriodicJob sandboxJanitorJob(SandboxJanitor janitor) {
+		return new PeriodicJob("sandbox cleanup", Duration.ofMinutes(5), Duration.ofMinutes(10), janitor::sweep, null);
 	}
 }

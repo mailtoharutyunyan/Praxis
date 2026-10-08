@@ -36,15 +36,15 @@ export class Api {
     return (await response.json()) as T;
   }
 
-  listRuns(states: RunState[] = [], limit = 50, createdBefore?: string): Promise<RunPage> {
+  listRuns(states: RunState[] = [], limit = 50, createdBefore?: string, signal?: AbortSignal): Promise<RunPage> {
     const params = new URLSearchParams({ limit: String(limit) });
     states.forEach((state) => params.append("state", state));
     if (createdBefore) params.set("createdBefore", createdBefore);
-    return this.request(`/runs?${params}`);
+    return this.request(`/runs?${params}`, { signal });
   }
 
-  getRun(id: string): Promise<Run> {
-    return this.request(`/runs/${encodeURIComponent(id)}`);
+  getRun(id: string, signal?: AbortSignal): Promise<Run> {
+    return this.request(`/runs/${encodeURIComponent(id)}`, { signal });
   }
 
   events(id: string, afterSeq = 0, limit = 500): Promise<RunEvent[]> {

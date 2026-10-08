@@ -1,0 +1,25 @@
+# Sandbox egress allowlist. Sandboxes join the internal network `agentic-sandbox`, which has no route out; the only
+# way out is this proxy, which allows package registries and nothing else (no cloud metadata, no internal hosts).
+#
+#   docker compose -p agentic-egress -f dev/egress/compose.yaml up -d
+#   agentic.sandbox.network=agentic-sandbox
+#   agentic.sandbox.egress-proxy=http://egress:3128
+#
+# Edit allowed-domains.txt to change what builds may download, then: docker compose ... restart egress
+services:
+  egress:
+    image: ubuntu/squid:6.6-24.04_edge
+    restart: unless-stopped
+    volumes:
+      - ./squid.conf:/etc/squid/squid.conf:ro
+      - ./allowed-domains.txt:/etc/squid/allowed-domains.txt:ro
+    networks:
+      sandbox:
+        aliases: [egress]
+      outside: {}
+
+networks:
+  sandbox:
+    name: agentic-sandbox
+    internal: true
+  outside: {}

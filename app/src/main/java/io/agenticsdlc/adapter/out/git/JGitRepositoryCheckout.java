@@ -5,36 +5,44 @@ import io.agenticsdlc.core.domain.RunView;
 import io.agenticsdlc.core.domain.ScmKind;
 import io.agenticsdlc.core.scm.ChangePublisher;
 import io.agenticsdlc.core.workspace.CheckoutInfo;
+import io.agenticsdlc.core.workspace.NestedRepositoryException;
 import io.agenticsdlc.core.workspace.ProjectConfig;
 import io.agenticsdlc.core.workspace.RepositoryCheckout;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
-import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import org.eclipse.jgit.api.CloneCommand;
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.api.errors.GitAPIException;
 import org.eclipse.jgit.diff.DiffFormatter;
+import org.eclipse.jgit.dircache.DirCache;
+import org.eclipse.jgit.dircache.DirCacheEntry;
 import org.eclipse.jgit.dircache.DirCacheIterator;
+import org.eclipse.jgit.lib.FileMode;
 import org.eclipse.jgit.lib.ObjectId;
+import org.eclipse.jgit.lib.ObjectLoader;
 import org.eclipse.jgit.lib.ObjectReader;
 import org.eclipse.jgit.lib.PersonIdent;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.lib.StoredConfig;
+import org.eclipse.jgit.revwalk.RevTree;
 import org.eclipse.jgit.revwalk.RevWalk;
 import org.eclipse.jgit.storage.file.FileRepositoryBuilder;
 import org.eclipse.jgit.transport.CredentialsProvider;
 import org.eclipse.jgit.transport.UsernamePasswordCredentialsProvider;
 import org.eclipse.jgit.treewalk.CanonicalTreeParser;
+import org.eclipse.jgit.treewalk.TreeWalk;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.yaml.snakeyaml.LoaderOptions;
@@ -47,13 +55,16 @@ import reactor.core.scheduler.Schedulers;
  * Working copies managed with JGit on the host. The work tree ({@code <run>/repo}) is mounted into the sandbox; the
  * git directory ({@code <run>/git}) is not, and hooks are disabled, so files the agent writes cannot execute on the
  * host where credentials live. Base branch and commit are recorded in the git config to keep {@link #checkout}
- * idempotent.
+ * idempotent; the base commit is written last and marks a complete checkout.
+ * <p>
+ * Build settings ({@code .agentic-sdlc.yml}), agent instructions and the root listing are read from the base commit,
+ * never the work tree, so the agent cannot change its own image, test command or reviewer guidance.
  */
 public class JGitRepositoryCheckout implements RepositoryCheckout, ChangePublisher {
 
 	private static final Logger log = LoggerFactory.getLogger(JGitRepositoryCheckout.class);
 	private static final String SECTION = "agentic";
-	private static final int MAX_INSTRUCTIONS_CHARS = 32_000;
+	private static final int MAX_INSTRUCTIONS_BYTES = 32_000;
 	private static final int MAX_CONFIG_BYTES = 16_384;
 
 	private final WorkspacePaths paths;
@@ -88,8 +99,7 @@ public class JGitRepositoryCheckout implements RepositoryCheckout, ChangePublish
 			if (!workBranch.equals(repository.getBranch())) {
 				throw new IllegalStateException("working copy of run " + runId + " is not on " + workBranch);
 			}
-			git.add().addFilepattern(".").call();
-			git.add().addFilepattern(".").setUpdate(true).call();
+			stageAll(git, repository);
 			if (!git.status().call().isClean()) {
 				PersonIdent now = new PersonIdent(author, java.time.Instant.now());
 				git.commit().setMessage(message).setAuthor(now).setCommitter(now).setSign(false).setNoVerify(true).call();
@@ -163,25 +173,28 @@ public class JGitRepositoryCheckout implements RepositoryCheckout, ChangePublish
 				// Never run hooks, even if a later step writes some into the git directory.
 				config.setString("core", null, "hooksPath", "/dev/null");
 				config.setString(SECTION, null, "baseBranch", baseBranch);
-				config.setString(SECTION, null, "baseCommit", head.name());
 				config.save();
 				git.checkout().setCreateBranch(true).setName(workBranch).call();
+				// Last: a checkout interrupted before this point is redone from scratch.
+				config.setString(SECTION, null, "baseCommit", head.name());
+				config.save();
 			}
 		}
 
-		try (Repository repository = open(runId)) {
+		try (Repository repository = open(runId); RevWalk walk = new RevWalk(repository)) {
 			String baseBranch = repository.getConfig().getString(SECTION, null, "baseBranch");
 			String baseCommit = repository.getConfig().getString(SECTION, null, "baseCommit");
-			return new CheckoutInfo(baseBranch, baseCommit, workBranch, rootEntries(repoDir), projectConfig(repoDir),
-					agentInstructions(repoDir));
+			RevTree tree = walk.parseCommit(ObjectId.fromString(baseCommit)).getTree();
+			String config = readBlob(repository, tree, ".agentic-sdlc.yml", MAX_CONFIG_BYTES, false);
+			return new CheckoutInfo(baseBranch, baseCommit, workBranch, rootEntries(repository, tree),
+					config == null ? null : projectConfig(config), agentInstructions(repository, tree));
 		}
 	}
 
 	private String diffBlocking(UUID runId) throws IOException, GitAPIException {
 		try (Repository repository = open(runId); Git git = new Git(repository)) {
 			// Stage everything (respecting .gitignore) so new and deleted files show up; the index lives on the host.
-			git.add().addFilepattern(".").call();
-			git.add().addFilepattern(".").setUpdate(true).call();
+			stageAll(git, repository);
 			ObjectId base = ObjectId.fromString(repository.getConfig().getString(SECTION, null, "baseCommit"));
 			ByteArrayOutputStream out = new ByteArrayOutputStream();
 			try (ObjectReader reader = repository.newObjectReader(); RevWalk walk = new RevWalk(reader);
@@ -192,6 +205,34 @@ public class JGitRepositoryCheckout implements RepositoryCheckout, ChangePublish
 				formatter.format(formatter.scan(baseTree, new DirCacheIterator(repository.readDirCache())));
 			}
 			return out.toString(StandardCharsets.UTF_8);
+		}
+	}
+
+	/**
+	 * {@code git add -A}, refusing nested repositories: git would record them as gitlinks (submodule pointers), so
+	 * their contents would silently be missing from the diff and the pushed branch.
+	 */
+	private static void stageAll(Git git, Repository repository) throws IOException, GitAPIException {
+		git.add().addFilepattern(".").call();
+		git.add().addFilepattern(".").setUpdate(true).call();
+		Set<String> baseGitlinks = new HashSet<>();
+		try (RevWalk walk = new RevWalk(repository); TreeWalk tree = new TreeWalk(repository)) {
+			tree.addTree(walk.parseCommit(ObjectId.fromString(
+					repository.getConfig().getString(SECTION, null, "baseCommit"))).getTree());
+			tree.setRecursive(true);
+			while (tree.next()) {
+				if (tree.getFileMode(0) == FileMode.GITLINK) {
+					baseGitlinks.add(tree.getPathString());
+				}
+			}
+		}
+		DirCache index = repository.readDirCache();
+		for (int i = 0; i < index.getEntryCount(); i++) {
+			DirCacheEntry entry = index.getEntry(i);
+			if (entry.getFileMode() == FileMode.GITLINK && !baseGitlinks.contains(entry.getPathString())) {
+				git.rm().setCached(true).addFilepattern(entry.getPathString()).call();
+				throw new NestedRepositoryException(entry.getPathString());
+			}
 		}
 	}
 
@@ -235,30 +276,55 @@ public class JGitRepositoryCheckout implements RepositoryCheckout, ChangePublish
 		return new UsernamePasswordCredentialsProvider(user, token);
 	}
 
-	private static Set<String> rootEntries(Path repoDir) throws IOException {
-		try (Stream<Path> entries = Files.list(repoDir)) {
-			return entries.map(p -> p.getFileName().toString()).filter(name -> !name.equals(".git"))
-					.collect(Collectors.toUnmodifiableSet());
+	private static Set<String> rootEntries(Repository repository, RevTree tree) throws IOException {
+		Set<String> names = new HashSet<>();
+		try (TreeWalk walk = new TreeWalk(repository)) {
+			walk.addTree(tree);
+			walk.setRecursive(false);
+			while (walk.next()) {
+				names.add(walk.getNameString());
+			}
+		}
+		return Set.copyOf(names);
+	}
+
+	/**
+	 * A regular file at the root of {@code tree}, decoded as UTF-8 (malformed bytes replaced); null if absent, not a
+	 * regular file (symlinks are ignored), or larger than {@code maxBytes} unless {@code truncate}.
+	 */
+	static String readBlob(Repository repository, RevTree tree, String name, int maxBytes, boolean truncate)
+			throws IOException {
+		try (TreeWalk walk = TreeWalk.forPath(repository, name, tree)) {
+			if (walk == null) {
+				return null;
+			}
+			FileMode mode = walk.getFileMode(0);
+			if (mode != FileMode.REGULAR_FILE && mode != FileMode.EXECUTABLE_FILE) {
+				return null;
+			}
+			ObjectLoader loader = repository.open(walk.getObjectId(0));
+			if (loader.getSize() > maxBytes && !truncate) {
+				return null;
+			}
+			try (InputStream in = loader.openStream()) {
+				return new String(in.readNBytes(maxBytes), StandardCharsets.UTF_8);
+			}
 		}
 	}
 
-	static ProjectConfig projectConfig(Path repoDir) {
-		Path file = repoDir.resolve(".agentic-sdlc.yml");
+	static ProjectConfig projectConfig(String yaml) {
 		try {
-			if (!Files.isRegularFile(file, java.nio.file.LinkOption.NOFOLLOW_LINKS) || Files.size(file) > MAX_CONFIG_BYTES) {
-				return null;
-			}
 			LoaderOptions options = new LoaderOptions();
 			options.setAllowDuplicateKeys(false);
 			options.setMaxAliasesForCollections(10);
-			Object parsed = new Yaml(new SafeConstructor(options)).load(Files.readString(file));
+			Object parsed = new Yaml(new SafeConstructor(options)).load(yaml);
 			if (!(parsed instanceof Map<?, ?> map)) {
 				return null;
 			}
 			return new ProjectConfig(string(map, "image"), string(map, "setup"), string(map, "build"),
 					string(map, "test"));
 		}
-		catch (IOException | RuntimeException e) {
+		catch (RuntimeException e) {
 			log.warn("ignoring unreadable .agentic-sdlc.yml: {}", e.getMessage());
 			return null;
 		}
@@ -269,12 +335,11 @@ public class JGitRepositoryCheckout implements RepositoryCheckout, ChangePublish
 		return value == null ? null : value.toString();
 	}
 
-	private static String agentInstructions(Path repoDir) throws IOException {
+	private static String agentInstructions(Repository repository, RevTree tree) throws IOException {
 		for (String name : List.of("AGENTS.md", "CLAUDE.md")) {
-			Path file = repoDir.resolve(name);
-			if (Files.isRegularFile(file, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
-				String text = Files.readString(file);
-				return text.length() <= MAX_INSTRUCTIONS_CHARS ? text : text.substring(0, MAX_INSTRUCTIONS_CHARS);
+			String text = readBlob(repository, tree, name, MAX_INSTRUCTIONS_BYTES, true);
+			if (text != null) {
+				return text;
 			}
 		}
 		return null;

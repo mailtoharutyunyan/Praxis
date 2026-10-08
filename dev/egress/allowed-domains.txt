@@ -1,0 +1,14 @@
+# Package registries builds may download from; a leading dot includes subdomains.
+.maven.apache.org
+repo.spring.io
+services.gradle.org
+downloads.gradle.org
+plugins.gradle.org
+plugins-artifacts.gradle.org
+registry.npmjs.org
+registry.yarnpkg.com
+pypi.org
+files.pythonhosted.org
+proxy.golang.org
+sum.golang.org
+api.nuget.org

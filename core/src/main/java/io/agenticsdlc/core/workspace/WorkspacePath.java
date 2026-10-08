@@ -41,7 +41,11 @@ public final class WorkspacePath {
 		if (result.equals("..") || result.startsWith("../")) {
 			throw new IllegalArgumentException("path escapes the workspace: " + input);
 		}
-		return result.isEmpty() ? "." : result;
+		if (result.isEmpty()) {
+			return ".";
+		}
+		// A leading dash would be read as an option by find, grep, cat and friends.
+		return result.startsWith("-") ? "./" + result : result;
 	}
 
 	/** Single-quotes a value for POSIX {@code sh}. */

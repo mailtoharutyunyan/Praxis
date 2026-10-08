@@ -6,22 +6,20 @@ import io.agenticsdlc.core.domain.RunState;
 import io.agenticsdlc.core.port.RunStore;
 import io.agenticsdlc.core.workspace.RepositoryCheckout;
 import io.agenticsdlc.core.workspace.Sandbox;
-import java.time.Duration;
 import java.util.List;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.context.SmartLifecycle;
-import reactor.core.Disposable;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
 /**
  * Periodically removes sandboxes and working copies of runs that are finished (DONE, FAILED, CANCELLED) or no longer
- * exist. Runs at PR_OPEN keep theirs for follow-up changes. Safe to run on every instance: removal is idempotent.
+ * exist. Runs at PR_OPEN keep theirs for follow-up changes. Runs on every instance (each cleans its own Docker host
+ * and disk); removal is idempotent.
  */
-public class SandboxJanitor implements SmartLifecycle {
+public class SandboxJanitor {
 
 	private static final Logger log = LoggerFactory.getLogger(SandboxJanitor.class);
 
@@ -29,16 +27,12 @@ public class SandboxJanitor implements SmartLifecycle {
 	private final RunStore store;
 	private final Sandbox sandbox;
 	private final RepositoryCheckout checkout;
-	private final Duration interval;
-	private volatile Disposable schedule;
 
-	public SandboxJanitor(DockerClient docker, RunStore store, Sandbox sandbox, RepositoryCheckout checkout,
-			Duration interval) {
+	public SandboxJanitor(DockerClient docker, RunStore store, Sandbox sandbox, RepositoryCheckout checkout) {
 		this.docker = docker;
 		this.store = store;
 		this.sandbox = sandbox;
 		this.checkout = checkout;
-		this.interval = interval;
 	}
 
 	/** One sweep; emits the run ids that were cleaned up. */
@@ -55,29 +49,5 @@ public class SandboxJanitor implements SmartLifecycle {
 						.filter(RunState::isTerminal)
 						.flatMap(state -> sandbox.destroy(runId).then(checkout.remove(runId)).thenReturn(runId)))
 				.doOnNext(runId -> log.info("cleaned up sandbox and workspace of finished run {}", runId));
-	}
-
-	@Override
-	public void start() {
-		schedule = Flux.interval(interval, interval)
-				.concatMap(tick -> sweep().onErrorResume(e -> {
-					log.warn("sandbox cleanup failed", e);
-					return Flux.empty();
-				}))
-				.subscribe();
-	}
-
-	@Override
-	public void stop() {
-		Disposable current = schedule;
-		if (current != null) {
-			current.dispose();
-		}
-		schedule = null;
-	}
-
-	@Override
-	public boolean isRunning() {
-		return schedule != null && !schedule.isDisposed();
 	}
 }

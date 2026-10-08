@@ -1,6 +1,7 @@
 package io.agenticsdlc.adapter.out.docker;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.github.dockerjava.api.DockerClient;
 import com.github.dockerjava.api.command.InspectContainerResponse;
@@ -55,7 +56,7 @@ class DockerSandboxTest {
 		runId = UUID.randomUUID();
 		Files.createDirectories(paths.repo(runId));
 		Files.writeString(paths.repo(runId).resolve("hello.txt"), "hello\n");
-		AgenticProperties.Sandbox settings = new AgenticProperties.Sandbox(true, tmp, "", "none",
+		AgenticProperties.Sandbox settings = new AgenticProperties.Sandbox(true, tmp, "", "none", "", "",
 				DataSize.ofMegabytes(256), 1, 128, "", Duration.ofMinutes(1), Duration.ofMinutes(5), 2_000);
 		sandbox = new DockerSandbox(docker, paths, settings);
 		sandbox.start(runId, new SandboxSpec(TestRepos.ALPINE, Map.of("GREETING", "hi"))).block();
@@ -114,6 +115,45 @@ class DockerSandboxTest {
 		assertThat(container.getHostConfig().getMemory()).isEqualTo(DataSize.ofMegabytes(256).toBytes());
 		assertThat(container.getConfig().getEnv()).noneMatch(e -> e.toLowerCase().contains("token"));
 		assertThat(run("id -u", Duration.ofSeconds(30)).output().trim()).isNotEqualTo("0");
+	}
+
+	@Test
+	void proxySettingsReachEveryBuildTool() {
+		UUID proxied = UUID.randomUUID();
+		DockerSandbox withProxy = new DockerSandbox(docker, paths, settings("none", "http://egress:3128", ""));
+		try {
+			withProxy.start(proxied, new SandboxSpec(TestRepos.ALPINE, Map.of())).block();
+			String out = withProxy.exec(proxied, "echo $HTTPS_PROXY $no_proxy; echo $MAVEN_ARGS; cat " + DockerSandbox.MAVEN_SETTINGS,
+					Duration.ofSeconds(30)).block().output();
+			assertThat(out).contains("http://egress:3128 localhost,127.0.0.1", "-gs " + DockerSandbox.MAVEN_SETTINGS,
+					"<host>egress</host><port>3128</port>", "<protocol>https</protocol>");
+		}
+		finally {
+			withProxy.destroy(proxied).block();
+		}
+	}
+
+	@Test
+	void unsafeConfigurationsAreRefusedAtStartup() {
+		assertThatThrownBy(() -> new DockerSandbox(docker, paths, settings("host", "", "")))
+				.isInstanceOf(IllegalArgumentException.class).hasMessageContaining("host");
+		assertThatThrownBy(() -> new DockerSandbox(docker, paths, settings("none", "", "0:0")))
+				.isInstanceOf(IllegalStateException.class).hasMessageContaining("root");
+		assertThatThrownBy(() -> new DockerSandbox(docker, paths, settings("none", "", "root")))
+				.isInstanceOf(IllegalStateException.class).hasMessageContaining("root");
+		assertThatThrownBy(() -> new DockerSandbox(docker, paths, settings("none", "egress", "")))
+				.isInstanceOf(IllegalArgumentException.class).hasMessageContaining("host and port");
+	}
+
+	@Test
+	void mavenSettingsEscapeValues() {
+		assertThat(DockerSandbox.mavenSettings(java.net.URI.create("http://proxy:8080"), "a,<b>"))
+				.contains("<nonProxyHosts>a|&lt;b&gt;</nonProxyHosts>");
+	}
+
+	private AgenticProperties.Sandbox settings(String network, String proxy, String user) {
+		return new AgenticProperties.Sandbox(true, tmp, "", network, proxy, "localhost,127.0.0.1",
+				DataSize.ofMegabytes(256), 1, 128, user, Duration.ofMinutes(1), Duration.ofMinutes(5), 2_000);
 	}
 
 	@Test

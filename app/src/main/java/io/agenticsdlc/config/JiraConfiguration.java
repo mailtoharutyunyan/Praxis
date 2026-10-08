@@ -12,15 +12,10 @@ import java.time.Clock;
 import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.Map;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBooleanProperty;
-import org.springframework.context.SmartLifecycle;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.reactive.function.client.WebClient;
-import reactor.core.Disposable;
-import reactor.core.publisher.Flux;
 
 /** Jira intake (webhook → run) and status comments back to the issue. */
 @Configuration(proxyBeanMethods = false)
@@ -56,47 +51,11 @@ class JiraConfiguration {
 				properties.jira().runLinkBase());
 	}
 
+	/** Posts pending status comments on a fixed interval, from one instance at a time (no duplicate comments). */
 	@Bean
-	TicketUpdatesWatcher jiraUpdatesWatcher(TicketUpdates updates, AgenticProperties properties) {
-		return new TicketUpdatesWatcher(updates, properties.jira().updateInterval());
-	}
-
-	/** Posts pending status comments on a fixed interval. */
-	static final class TicketUpdatesWatcher implements SmartLifecycle {
-
-		private static final Logger log = LoggerFactory.getLogger(TicketUpdatesWatcher.class);
-
-		private final TicketUpdates updates;
-		private final Duration interval;
-		private volatile Disposable schedule;
-
-		TicketUpdatesWatcher(TicketUpdates updates, Duration interval) {
-			this.updates = updates;
-			this.interval = interval;
-		}
-
-		@Override
-		public void start() {
-			schedule = Flux.interval(interval, interval)
-					.concatMap(tick -> updates.sweep().onErrorResume(e -> {
-						log.warn("ticket update sweep failed", e);
-						return Flux.empty();
-					}))
-					.subscribe();
-		}
-
-		@Override
-		public void stop() {
-			Disposable current = schedule;
-			if (current != null) {
-				current.dispose();
-			}
-			schedule = null;
-		}
-
-		@Override
-		public boolean isRunning() {
-			return schedule != null && !schedule.isDisposed();
-		}
+	PeriodicJob jiraUpdatesWatcher(TicketUpdates updates, AgenticProperties properties,
+			ClusterConfiguration.JobLeases leases) {
+		return new PeriodicJob("Jira status comments", properties.jira().updateInterval(), Duration.ofMinutes(10),
+				updates::sweep, leases.forJob("jira-ticket-updates"));
 	}
 }

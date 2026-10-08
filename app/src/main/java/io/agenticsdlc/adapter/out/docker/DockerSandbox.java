@@ -15,6 +15,7 @@ import io.agenticsdlc.core.workspace.CommandResult;
 import io.agenticsdlc.core.workspace.Sandbox;
 import io.agenticsdlc.core.workspace.SandboxSpec;
 import java.io.IOException;
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.NoSuchFileException;
@@ -23,6 +24,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import org.slf4j.Logger;
@@ -32,9 +34,10 @@ import reactor.core.scheduler.Schedulers;
 
 /**
  * One long-lived container per run, named {@code agentic-run-<runId>}, with the run's checkout bind-mounted at
- * {@code /workspace}. Hardening: all Linux capabilities dropped, {@code no-new-privileges}, non-root user, memory,
- * CPU and process limits, and no credentials in the environment. Commands run via {@code docker exec}, wrapped in
- * {@code timeout} so a hung build is killed inside the container.
+ * {@code /workspace}. Hardening: all Linux capabilities dropped, {@code no-new-privileges}, non-root user (refused
+ * otherwise), memory, CPU and process limits, no network unless configured (never the host's), and no credentials in
+ * the environment. Commands run via {@code docker exec}, wrapped in {@code timeout} so a hung build is killed inside
+ * the container.
  */
 public class DockerSandbox implements Sandbox {
 
@@ -45,14 +48,33 @@ public class DockerSandbox implements Sandbox {
 	private static final String RUN_WITH_TIMEOUT = "if command -v timeout >/dev/null 2>&1; "
 			+ "then exec timeout -s KILL \"$AGENTIC_TIMEOUT\" sh -c \"$AGENTIC_CMD\"; else exec sh -c \"$AGENTIC_CMD\"; fi";
 
+	static final String MAVEN_SETTINGS = "/tmp/.agentic/maven-settings.xml";
+
 	private final DockerClient docker;
 	private final WorkspacePaths paths;
 	private final AgenticProperties.Sandbox settings;
+	private final URI proxy;
+	private final String user;
 
+	/** Fails fast on an unsafe configuration: host networking, or a sandbox that would run as root. */
 	public DockerSandbox(DockerClient docker, WorkspacePaths paths, AgenticProperties.Sandbox settings) {
 		this.docker = docker;
 		this.paths = paths;
 		this.settings = settings;
+		if (settings.network().equals("host") || settings.network().startsWith("container:")) {
+			throw new IllegalArgumentException("agentic.sandbox.network=" + settings.network()
+					+ " would share the host's or another container's network; use none or an internal network");
+		}
+		this.proxy = settings.egressProxy().isBlank() ? null : URI.create(settings.egressProxy());
+		if (proxy != null && (proxy.getHost() == null || proxy.getPort() < 0)) {
+			throw new IllegalArgumentException("agentic.sandbox.egress-proxy needs a host and port, e.g. "
+					+ "http://egress:3128");
+		}
+		if (Set.of("bridge", "default").contains(settings.network())) {
+			log.warn("sandbox network '{}' allows unrestricted egress (cloud metadata, internal hosts); use an internal "
+					+ "network with agentic.sandbox.egress-proxy for untrusted tasks", settings.network());
+		}
+		this.user = resolveUser();
 	}
 
 	static String containerName(UUID runId) {
@@ -140,6 +162,9 @@ public class DockerSandbox implements Sandbox {
 			List<String> env = new ArrayList<>();
 			env.add("HOME=/tmp");
 			env.add("CI=true");
+			if (proxy != null) {
+				env.addAll(proxyEnvironment(proxy, settings.noProxy()));
+			}
 			spec.env().forEach((k, v) -> env.add(k + "=" + v));
 			HostConfig host = HostConfig.newHostConfig()
 					.withBinds(new Bind(repo.toString(), new Volume(Sandbox.WORKDIR)))
@@ -157,7 +182,7 @@ public class DockerSandbox implements Sandbox {
 					.withEntrypoint(IDLE)
 					.withCmd(List.of())
 					.withWorkingDir(Sandbox.WORKDIR)
-					.withUser(user())
+					.withUser(user)
 					.withEnv(env)
 					.withHostConfig(host)
 					.exec();
@@ -166,6 +191,51 @@ public class DockerSandbox implements Sandbox {
 		InspectContainerResponse current = inspect(name);
 		if (current != null && !Boolean.TRUE.equals(current.getState().getRunning())) {
 			docker.startContainerCmd(name).exec();
+		}
+		if (proxy != null) {
+			writeMavenSettings(runId);
+		}
+	}
+
+	/** Proxy settings in the forms common build tools read; Maven only honours its settings file. */
+	static List<String> proxyEnvironment(URI proxy, String noProxy) {
+		String url = proxy.getScheme() + "://" + proxy.getHost() + ":" + proxy.getPort();
+		String jvm = "-Dhttp.proxyHost=" + proxy.getHost() + " -Dhttp.proxyPort=" + proxy.getPort() + " -Dhttps.proxyHost="
+				+ proxy.getHost() + " -Dhttps.proxyPort=" + proxy.getPort()
+				+ (noProxy.isBlank() ? "" : " -Dhttp.nonProxyHosts=" + noProxy.replace(',', '|'));
+		return List.of("HTTP_PROXY=" + url, "HTTPS_PROXY=" + url, "http_proxy=" + url, "https_proxy=" + url,
+				"NO_PROXY=" + noProxy, "no_proxy=" + noProxy, "JAVA_TOOL_OPTIONS=" + jvm, "MAVEN_ARGS=-gs " + MAVEN_SETTINGS);
+	}
+
+	static String mavenSettings(URI proxy, String noProxy) {
+		String host = xml(proxy.getHost());
+		StringBuilder proxies = new StringBuilder();
+		for (String protocol : List.of("http", "https")) {
+			proxies.append("<proxy><id>agentic-").append(protocol).append("</id><active>true</active><protocol>")
+					.append(protocol).append("</protocol><host>").append(host).append("</host><port>")
+					.append(proxy.getPort()).append("</port><nonProxyHosts>").append(xml(noProxy.replace(',', '|')))
+					.append("</nonProxyHosts></proxy>");
+		}
+		return "<settings><proxies>" + proxies + "</proxies></settings>\n";
+	}
+
+	private static String xml(String value) {
+		return value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
+	}
+
+	private void writeMavenSettings(UUID runId) {
+		try {
+			String data = java.util.Base64.getEncoder().encodeToString(
+					mavenSettings(proxy, settings.noProxy()).getBytes(StandardCharsets.UTF_8));
+			Raw raw = execRaw(runId, "mkdir -p /tmp/.agentic && printf '%s' \"$AGENTIC_DATA\" | base64 -d > " + MAVEN_SETTINGS,
+					List.of("AGENTIC_DATA=" + data), 0);
+			if (raw.exitCode() != 0) {
+				throw new IllegalStateException("writing Maven proxy settings failed: " + raw.stderr());
+			}
+		}
+		catch (InterruptedException e) {
+			Thread.currentThread().interrupt();
+			throw new IllegalStateException("interrupted while configuring the sandbox", e);
 		}
 	}
 
@@ -292,18 +362,28 @@ public class DockerSandbox implements Sandbox {
 		}
 	}
 
-	/** Configured user, else the owner of the workspace root so the container can write the bind mount. */
-	private String user() {
+	/**
+	 * Configured user, else the owner of the workspace root so the container can write the bind mount. Root is refused:
+	 * with the workspace bind-mounted, a root sandbox could plant root-owned files on the host.
+	 */
+	private String resolveUser() {
+		String resolved;
 		if (!settings.user().isBlank()) {
-			return settings.user();
+			resolved = settings.user().strip();
 		}
-		try {
-			Object uid = Files.getAttribute(paths.root(), "unix:uid");
-			Object gid = Files.getAttribute(paths.root(), "unix:gid");
-			return uid + ":" + gid;
+		else {
+			try {
+				resolved = Files.getAttribute(paths.root(), "unix:uid") + ":" + Files.getAttribute(paths.root(), "unix:gid");
+			}
+			catch (IOException | UnsupportedOperationException | IllegalArgumentException e) {
+				resolved = "1000:1000";
+			}
 		}
-		catch (IOException | UnsupportedOperationException | IllegalArgumentException e) {
-			return "1000:1000";
+		String name = resolved.split(":", 2)[0];
+		if (name.equals("0") || name.equals("root")) {
+			throw new IllegalStateException("the sandbox would run as root (" + resolved + "); run the app as a non-root "
+					+ "user that owns " + paths.root() + ", or set agentic.sandbox.user to a non-root uid:gid");
 		}
+		return resolved;
 	}
 }

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, type Api } from "../lib/api";
 import { followEvents } from "../lib/sse";
 import type { GateDecision, RiskLevel, Run, RunEvent } from "../lib/types";
@@ -21,15 +21,34 @@ export function RunPage(props: {
   const [error, setError] = useState<string | null>(null);
   const [verbose, setVerbose] = useState(false);
 
+  // Stale responses are ignored: requests for a previously shown run are aborted, and of overlapping
+  // refreshes (bursts of events, polling after actions) an older response never replaces a newer one.
+  const scope = useRef({ id, controller: new AbortController() });
+  const issued = useRef(0);
+  const applied = useRef(0);
+
   const refresh = useCallback(async () => {
+    const { id: current, controller: { signal } } = scope.current;
+    if (current !== id) return;
+    const ticket = ++issued.current;
     try {
-      setRun(await api.getRun(id));
+      const fresh = await api.getRun(id, signal);
+      if (signal.aborted || ticket < applied.current) return;
+      applied.current = ticket;
+      setRun(fresh);
     } catch (e) {
+      if (signal.aborted || ticket < applied.current) return;
       setError(e instanceof Error ? e.message : "Could not load the run.");
     }
   }, [api, id]);
 
   useEffect(() => {
+    const controller = new AbortController();
+    if (scope.current.id !== id) {
+      setRun(null);
+      setError(null);
+    }
+    scope.current = { id, controller };
     setEvents([]);
     void refresh();
     const stop = followEvents({
@@ -42,7 +61,10 @@ export function RunPage(props: {
       },
       onEnd: () => void refresh(),
     });
-    return stop;
+    return () => {
+      controller.abort();
+      stop();
+    };
   }, [api, id, token, refresh]);
 
   const act = async (action: () => Promise<Run>) => {
@@ -62,8 +84,12 @@ export function RunPage(props: {
   const live = !TERMINAL.includes(run.state);
   const pr = [...events].reverse().find((e) => e.type === "ARTIFACT_PRODUCED" && e.payload.kind === "pull-request");
 
-  const decide = (decision: GateDecision, comment: string) =>
-    act(() => api.decide(run.id, run.pendingGate!, decision, comment));
+  // Rejects on failure, so the approval panel keeps the comment and shows the error.
+  const decide = async (decision: GateDecision, comment: string) => {
+    setError(null);
+    await api.decide(run.id, run.pendingGate!, decision, comment);
+    await refresh();
+  };
   const raise = () => {
     const risk = window.prompt("Raise risk to (MEDIUM or HIGH)", "HIGH")?.toUpperCase() as RiskLevel | undefined;
     const reason = risk ? window.prompt("Why?") : null;

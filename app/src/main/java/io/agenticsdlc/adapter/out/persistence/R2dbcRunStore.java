@@ -3,6 +3,8 @@ package io.agenticsdlc.adapter.out.persistence;
 import static io.agenticsdlc.adapter.out.persistence.RunRows.name;
 import static io.agenticsdlc.adapter.out.persistence.RunRows.timestamp;
 
+import io.agenticsdlc.config.AgenticProperties;
+import io.agenticsdlc.config.NodeIdentity;
 import io.agenticsdlc.core.domain.Run;
 import io.agenticsdlc.core.domain.RunEvent;
 import io.agenticsdlc.core.domain.RunEventType;
@@ -33,6 +35,9 @@ import reactor.core.publisher.Mono;
  * transaction; event sequence numbers are reserved by incrementing {@code runs.last_event_seq} under the row lock,
  * so they are gap-free and in commit order. Each commit with events sends a {@code NOTIFY run_events} with the run
  * id, delivered by Postgres only after the transaction commits.
+ * <p>
+ * Claims respect workspace affinity: a run is claimed by the node that holds its working copy
+ * ({@code runs.workspace_node}), or by any node once that one has stopped sending heartbeats.
  */
 @Repository
 class R2dbcRunStore implements RunStore {
@@ -47,11 +52,16 @@ class R2dbcRunStore implements RunStore {
 	private final DatabaseClient db;
 	private final TransactionalOperator tx;
 	private final EventPayloadCodec codec;
+	private final String node;
+	private final Duration nodeTimeout;
 
-	R2dbcRunStore(DatabaseClient db, TransactionalOperator tx, EventPayloadCodec codec) {
+	R2dbcRunStore(DatabaseClient db, TransactionalOperator tx, EventPayloadCodec codec, NodeIdentity node,
+			AgenticProperties properties) {
 		this.db = db;
 		this.tx = tx;
 		this.codec = codec;
+		this.node = node.node();
+		this.nodeTimeout = properties.worker().nodeTimeout();
 	}
 
 	@Override
@@ -159,8 +169,8 @@ class R2dbcRunStore implements RunStore {
 		}
 		Mono<Void> work = db.sql("""
 				update runs set last_event_seq = last_event_seq + :eventCount
-				where id = :id and lease_owner = :owner and lease_expires_at > now()
-				returning last_event_seq""")
+				where id = :id and lease_owner = :owner and lease_expires_at > now() and state in %s
+				returning last_event_seq""".formatted(WORKING_STATES))
 				.bind("eventCount", events.size())
 				.bind("id", runId)
 				.bind("owner", leaseOwner)
@@ -190,17 +200,23 @@ class R2dbcRunStore implements RunStore {
 	@Override
 	public Mono<Run> claim(String owner, Duration lease) {
 		// The inner select repeats the partial index predicate verbatim so the planner can use runs_claimable_idx.
+		// Oldest change first, so a run whose lease expired is not starved by newer runs.
 		return db.sql("""
-				update runs r set lease_owner = :owner,
+				update runs r set lease_owner = :owner, workspace_node = :node,
 				    lease_expires_at = now() + make_interval(secs => :leaseSeconds), version = r.version + 1
 				where r.id = (
 				    select id from runs
 				    where state in %s and (lease_expires_at is null or lease_expires_at < now())
-				    order by lease_expires_at nulls first, updated_at
+				      and (workspace_node is null or workspace_node = :node or not exists (
+				          select 1 from worker_nodes n where n.node = runs.workspace_node
+				          and n.heartbeat_at > now() - make_interval(secs => :nodeTimeoutSeconds)))
+				    order by updated_at, id
 				    limit 1
 				    for update skip locked)
 				returning %s""".formatted(WORKING_STATES, RunRows.RUN_COLUMNS))
 				.bind("owner", owner)
+				.bind("node", node)
+				.bind("nodeTimeoutSeconds", (double) nodeTimeout.toMillis() / 1000)
 				.bind("leaseSeconds", (double) lease.toMillis() / 1000)
 				.map(RunRows::run)
 				.one();
@@ -210,7 +226,8 @@ class R2dbcRunStore implements RunStore {
 	public Mono<Boolean> renewLease(UUID runId, String owner, Duration lease) {
 		return db.sql("""
 				update runs set lease_expires_at = now() + make_interval(secs => :leaseSeconds)
-				where id = :id and lease_owner = :owner and lease_expires_at > now()""")
+				where id = :id and lease_owner = :owner and lease_expires_at > now() and state in %s"""
+				.formatted(WORKING_STATES))
 				.bind("leaseSeconds", (double) lease.toMillis() / 1000)
 				.bind("id", runId)
 				.bind("owner", owner)

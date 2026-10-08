@@ -5,8 +5,6 @@ import io.agenticsdlc.core.engine.RunWorker;
 import io.agenticsdlc.core.engine.StageHandler;
 import io.agenticsdlc.core.port.RunStore;
 import io.micrometer.core.instrument.MeterRegistry;
-import java.net.InetAddress;
-import java.net.UnknownHostException;
 import java.time.Clock;
 import io.agenticsdlc.core.domain.RunState;
 import java.util.EnumMap;
@@ -24,8 +22,8 @@ class WorkerConfiguration {
 
 	@Bean
 	RunWorker runWorker(RunStore store, ObjectProvider<StageHandler> handlers, RunLimits limits, Clock clock,
-			AgenticProperties properties, MeterRegistry meters) {
-		return new RunWorker(store, effective(handlers.orderedStream().toList()), limits, clock, workerId(),
+			AgenticProperties properties, MeterRegistry meters, NodeIdentity node) {
+		return new RunWorker(store, effective(handlers.orderedStream().toList()), limits, clock, workerId(node),
 				properties.worker().lease(), new MeteredWorkerListener(meters));
 	}
 
@@ -50,14 +48,7 @@ class WorkerConfiguration {
 	}
 
 	/** Unique per process, readable in the database's lease_owner column. */
-	private static String workerId() {
-		String host;
-		try {
-			host = InetAddress.getLocalHost().getHostName();
-		}
-		catch (UnknownHostException e) {
-			host = "unknown-host";
-		}
-		return host + "/" + ProcessHandle.current().pid() + "/" + UUID.randomUUID().toString().substring(0, 8);
+	private static String workerId(NodeIdentity node) {
+		return node.node() + "/" + ProcessHandle.current().pid() + "/" + UUID.randomUUID().toString().substring(0, 8);
 	}
 }

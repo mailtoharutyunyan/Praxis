@@ -7,6 +7,7 @@ import io.agenticsdlc.core.agent.ToolCall;
 import io.agenticsdlc.core.agent.ToolException;
 import io.agenticsdlc.core.agent.ToolSpec;
 import io.agenticsdlc.core.workspace.CommandResult;
+import io.agenticsdlc.core.workspace.NestedRepositoryException;
 import io.agenticsdlc.core.workspace.RepositoryCheckout;
 import io.agenticsdlc.core.workspace.Sandbox;
 import io.agenticsdlc.core.workspace.WorkspacePath;
@@ -196,7 +197,8 @@ public final class SandboxTools {
 				Show all changes made so far as a unified diff against the base commit, including new and deleted \
 				files.""", """
 				{"type":"object","properties":{}}""", false,
-				(runId, call) -> checkout.diff(runId).map(d -> d.isBlank() ? "No changes yet." : d));
+				(runId, call) -> checkout.diff(runId).map(d -> d.isBlank() ? "No changes yet." : d)
+						.onErrorMap(NestedRepositoryException.class, e -> new ToolException(e.getMessage())));
 	}
 
 	private Mono<CommandResult> exec(UUID runId, String command, Duration timeout) {

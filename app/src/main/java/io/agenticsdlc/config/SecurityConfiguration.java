@@ -17,6 +17,7 @@ import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter;
 import org.springframework.security.oauth2.server.resource.authentication.ReactiveJwtAuthenticationConverterAdapter;
 import org.springframework.security.web.server.SecurityWebFilterChain;
+import org.springframework.security.web.server.header.XFrameOptionsServerHttpHeadersWriter;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.reactive.CorsConfigurationSource;
 import org.springframework.web.cors.reactive.UrlBasedCorsConfigurationSource;
@@ -50,7 +51,8 @@ class SecurityConfiguration {
 				.authorizeExchange(auth -> auth
 						.pathMatchers("/actuator/health/**", "/actuator/info", "/actuator/prometheus").permitAll()
 						// The web UI's static assets and runtime config are public; its API calls carry the user's JWT.
-						.pathMatchers(HttpMethod.GET, "/", "/index.html", "/assets/**", "/favicon.ico", "/favicon.svg", "/ui-config.json")
+						.pathMatchers(HttpMethod.GET, "/", "/index.html", "/silent-renew.html", "/assets/**", "/favicon.ico",
+								"/favicon.svg", "/ui-config.json")
 						.permitAll()
 						// Webhooks authenticate by signature or token inside the controller.
 						.pathMatchers(HttpMethod.POST, "/api/v1/webhooks/**").permitAll()
@@ -63,18 +65,23 @@ class SecurityConfiguration {
 				.oauth2ResourceServer(oauth2 -> oauth2.jwt(jwt -> jwt.jwtAuthenticationConverter(
 						rolesConverter(properties.security().rolesClaim()))))
 				.headers(headers -> headers
+						// The UI renews tokens in a hidden same-origin iframe (silent-renew.html).
+						.frameOptions(frame -> frame.mode(XFrameOptionsServerHttpHeadersWriter.Mode.SAMEORIGIN))
 						.contentSecurityPolicy(csp -> csp.policyDirectives(contentSecurityPolicy(properties.ui().issuer())))
 						.referrerPolicy(referrer -> referrer.policy(
 								org.springframework.security.web.server.header.ReferrerPolicyServerHttpHeadersWriter.ReferrerPolicy.NO_REFERRER)))
 				.build();
 	}
 
-	/** Scripts only from this origin; the identity provider is reachable for token calls and silent renew. */
+	/**
+	 * Scripts only from this origin; the identity provider is reachable for token calls and silent renew, and only this
+	 * origin may frame the app (the silent-renew iframe).
+	 */
 	static String contentSecurityPolicy(String issuer) {
 		String idp = issuer == null || issuer.isBlank() ? "" : " " + java.net.URI.create(issuer).resolve("/").toString()
 				.replaceAll("/$", "");
 		return "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
-				+ "connect-src 'self'" + idp + "; frame-src 'self'" + idp + "; frame-ancestors 'none'; base-uri 'self'; "
+				+ "connect-src 'self'" + idp + "; frame-src 'self'" + idp + "; frame-ancestors 'self'; base-uri 'self'; "
 				+ "form-action 'self'" + idp + "; object-src 'none'";
 	}
 

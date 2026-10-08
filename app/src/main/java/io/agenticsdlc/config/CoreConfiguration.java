@@ -20,6 +20,11 @@ import org.springframework.context.annotation.Configuration;
 class CoreConfiguration {
 
 	@Bean
+	NodeIdentity nodeIdentity(AgenticProperties properties) {
+		return NodeIdentity.of(properties.worker().nodeId());
+	}
+
+	@Bean
 	Clock clock() {
 		return Clock.systemUTC();
 	}

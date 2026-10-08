@@ -7,6 +7,9 @@ spring:
           public-key-location: file:../.dev/jwt-public.pem
 
 agentic:
+  sandbox:
+    # Convenient but unrestricted egress; never use bridge for untrusted tickets (see dev/egress).
+    network: bridge
   stub-stages:
     enabled: true
   # Real model stages need an API key; without one the placeholders walk runs through the pipeline.

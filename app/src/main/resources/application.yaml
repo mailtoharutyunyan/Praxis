@@ -1,6 +1,11 @@
 spring:
   application:
     name: agentic-sdlc
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          audiences: ${AGENTIC_JWT_AUDIENCE:agentic-sdlc}
   threads:
     virtual:
       enabled: true
@@ -30,7 +35,8 @@ management:
 
 # Configure an OIDC provider in each environment, e.g.
 #   SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_ISSUER_URI=https://idp.example.com/realms/agentic
-# The local profile uses a developer key pair instead (scripts/dev-token.sh).
+# Access tokens must name this API in `aud` (AGENTIC_JWT_AUDIENCE; in Keycloak add an audience mapper), so tokens the
+# same IdP issues for other apps are rejected. The local profile uses a developer key pair (scripts/dev-token.sh).
 
 agentic:
   worker:
@@ -57,7 +63,10 @@ agentic:
   sandbox:
     enabled: true
     workspace-root: ${user.home}/.agentic-sdlc/workspaces
-    network: bridge
+    # none: no network. For dependency downloads use an internal network plus an allowlisting proxy (dev/egress):
+    #   network: agentic-sandbox
+    #   egress-proxy: http://egress:3128
+    network: none
     memory: 4GB
     cpus: 2
     command-timeout: 20m
