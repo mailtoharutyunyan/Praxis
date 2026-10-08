@@ -119,6 +119,52 @@ describe("Built-in sign-in and onboarding", () => {
     expect(screen.queryByLabelText(/Confirm password/)).toBeNull();
   });
 
+  it("lists Insights between Runs and Memory and opens it at #/insights", async () => {
+    localStorage.setItem("agentic.localToken", token({ sub: "vera", roles: ["viewer"], exp: Date.now() / 1000 + 3600 }));
+    window.location.hash = "#/insights";
+    const fetch = routes({
+      "/ui-config.json": localConfig,
+      "/api/v1/setup": () => Response.json({ authMode: "local", complete: true, steps: [
+        { id: "admin", title: "Admin account", required: true, state: "DONE" }] }),
+      "/api/v1/runs": () => Response.json({ items: [], nextCreatedBefore: null }),
+      "/api/v1/insights": () => Response.json({
+        days: 30, from: "2026-09-09T00:00:00Z", to: "2026-10-08T12:00:00Z", runsStarted: 0,
+        finished: { DONE: 0, FAILED: 0, CANCELLED: 0 }, successRate: null,
+        minutesToPullRequest: { median: null, p90: null, count: 0 }, costUsd: 0, totalTokens: 0,
+        runsPerDay: Array.from({ length: 30 }, (_, i) => ({
+          date: new Date(Date.UTC(2026, 8, 9) + i * 86_400_000).toISOString().slice(0, 10), count: 0 })),
+      }),
+    });
+    vi.stubGlobal("fetch", fetch);
+    try {
+      render(<App />);
+
+      const nav = await screen.findByRole("navigation", { name: "Main" });
+      const links = Array.from(nav.querySelectorAll("a"));
+      const index = (label: string) => links.findIndex((a) => a.textContent?.includes(label));
+      expect(index("Insights")).toBe(index("Runs") + 1);
+      expect(index("Memory")).toBe(index("Insights") + 1);
+      const insights = links[index("Insights")];
+      expect(insights).toHaveAttribute("href", "#/insights");
+      expect(insights).toHaveAttribute("aria-current", "page");
+      expect(insights).toHaveClass("active");
+      expect(links[index("Runs")]).not.toHaveAttribute("aria-current");
+
+      const compact = screen.getByRole("navigation", { name: "Main (compact)" });
+      const compactLinks = Array.from(compact.querySelectorAll("a"));
+      const compactIndex = (label: string) => compactLinks.findIndex((a) => a.getAttribute("title") === label);
+      expect(compactIndex("Insights")).toBe(compactIndex("Runs") + 1);
+      expect(compactIndex("Memory")).toBe(compactIndex("Insights") + 1);
+      expect(compactLinks[compactIndex("Insights")]).toHaveAttribute("href", "#/insights");
+      expect(compactLinks[compactIndex("Insights")]).toHaveClass("active");
+
+      await waitFor(() => expect(fetch.mock.calls.some(([url]) => String(url) === "/api/v1/insights?days=30")).toBe(true));
+    }
+    finally {
+      window.location.hash = "";
+    }
+  });
+
   it("ignores an expired stored token", async () => {
     localStorage.setItem("agentic.localToken", token({ sub: "admin", roles: ["admin"], exp: Date.now() / 1000 - 10 }));
     vi.stubGlobal("fetch", routes({

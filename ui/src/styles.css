@@ -330,6 +330,13 @@ dialog::backdrop { background: rgb(15 23 41 / 45%); backdrop-filter: blur(2px); 
 .stat b { display: block; font-size: 18px; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
 .stat span { font-size: 11.5px; color: var(--muted); }
 
+/* ---------- Insights ---------- */
+.stats.wide { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+.bar-chart svg { display: block; width: 100%; height: 160px; }
+.bar-chart rect { fill: var(--accent); }
+.bar-chart rect:hover { fill: var(--accent-hover); }
+.bar-chart-axis { display: flex; justify-content: space-between; margin-top: 6px; font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+
 /* ---------- Auth & onboarding ---------- */
 .auth { min-height: 100vh; display: grid; place-items: center; padding: 32px 16px;
   background: radial-gradient(1200px 600px at 10% -10%, var(--accent-soft), transparent 60%), radial-gradient(900px 500px at 110% 110%, var(--violet-soft), transparent 60%), var(--bg); }
