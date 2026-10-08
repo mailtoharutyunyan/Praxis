@@ -102,6 +102,8 @@ class AgentPipelineTest {
 					call("run_command", Map.of("command", "grep -q hello hello.txt")),
 					answer("Changed the greeting."))));
 			scripts.put(AgentRole.REVIEWER, new ArrayDeque<>(List.of(
+					// spec critic
+					answer("No problems found.\nSPEC_VERDICT: OK"),
 					call("show_diff", Map.of()),
 					answer("Diff matches the spec.\nVERDICT: APPROVE"))));
 			return role -> new AgentModel() {

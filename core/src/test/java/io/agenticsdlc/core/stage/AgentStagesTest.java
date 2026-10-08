@@ -133,6 +133,29 @@ class AgentStagesTest {
 	}
 
 	@Test
+	void aSpecCriticCanSendTheSpecificationBackOnce() {
+		AgentStages critical = new AgentStages(models::get, new RunWorkspace(checkout, sandbox, Duration.ofMinutes(5)),
+				new SandboxTools(sandbox, checkout, Duration.ofMinutes(5)), Fixtures.LIMITS,
+				new AgentLoop.Limits(10, 4000, 2000, 3), new AgentStages.Options(false, true));
+		models.get(AgentRole.PLANNER).thenAnswer("## Requirements\n1. WHEN searched THE SYSTEM SHALL be fast.")
+				.thenAnswer("## Requirements\n1. WHEN searched THE SYSTEM SHALL answer within 200 ms.");
+		models.get(AgentRole.REVIEWER).thenAnswer("- [UNTESTABLE] 1: 'fast' has no bound; say 200 ms\nSPEC_VERDICT: REVISE");
+
+		StageOutcome outcome = critical.specify(context).block();
+
+		assertThat(outcome).isInstanceOf(StageOutcome.Completed.class);
+		assertThat(outcome.usage().totalTokens()).isPositive();
+		RunHistory history = new RunHistory(store.allEvents(context.run().id()));
+		assertThat(history.latestArtifact(RunHistory.SPEC)).hasValueSatisfying(spec -> assertThat(spec).contains("200 ms"));
+		assertThat(history.latestArtifactEvent(RunHistory.SPEC_REVIEW)).hasValueSatisfying(e ->
+				assertThat(e.payload()).containsEntry("verdict", "REVISE"));
+		assertThat(models.get(AgentRole.PLANNER).requests.getLast().messages().getFirst().toString())
+				.contains("<spec_review>", "'fast' has no bound", "<previous_spec>");
+		assertThat(AgentStages.specVerdict("fine\nSPEC_VERDICT: OK")).isEqualTo(AgentStages.SpecVerdict.OK);
+		assertThat(AgentStages.specVerdict("SPEC_VERDICT: REVISE\nbut on reflection fine")).isEqualTo(AgentStages.SpecVerdict.OK);
+	}
+
+	@Test
 	void specifyRecordsSpecAndRevisesAfterChangeRequest() {
 		models.get(AgentRole.PLANNER).thenCall("list_files", Map.of()).thenAnswer("## Requirements\n1. WHEN x THE SYSTEM SHALL y");
 		assertThat(stages.specify(context).block()).isInstanceOf(StageOutcome.Completed.class);

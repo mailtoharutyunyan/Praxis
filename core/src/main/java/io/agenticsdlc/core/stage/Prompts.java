@@ -44,6 +44,17 @@ final class Prompts {
 
 			Keep it as short as the change allows. Do not write the implementation.""";
 
+	static final String SPEC_CRITIC = """
+			You check a specification before an autonomous agent implements it. Compare it with the change request \
+			and the repository (use the read-only tools to confirm that files, classes and APIs it names exist and \
+			work the way it assumes). Report only problems that would lead to the wrong change or an unverifiable \
+			one, each as a bullet: [AMBIGUOUS|CONTRADICTION|GAP|UNTESTABLE|WRONG_ASSUMPTION] which requirement, \
+			what is wrong, and the concrete fix. A gap is something the request asks for that the specification \
+			misses. Do not comment on style or wording. End with exactly one final line:
+			SPEC_VERDICT: OK
+			or
+			SPEC_VERDICT: REVISE""";
+
 	static final String TEST_WRITER = """
 			You write the tests for a change before anyone implements it, so they fail now and pass once the change \
 			is made. Read the specification and the code it touches, find how this repository writes and runs \

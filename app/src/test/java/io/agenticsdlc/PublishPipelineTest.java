@@ -52,7 +52,7 @@ import reactor.core.publisher.Mono;
  * repository) and opens a pull request on a fake GitHub API; when GitHub reports it merged, the run is DONE.
  */
 @Import({ TestcontainersConfiguration.class, PublishPipelineTest.Models.class })
-@SpringBootTest(properties = { "agentic.sandbox.enabled=true", "agentic.agent.enabled=true", "agentic.agent.tests-first=false",
+@SpringBootTest(properties = { "agentic.sandbox.enabled=true", "agentic.agent.enabled=true", "agentic.agent.tests-first=false", "agentic.agent.spec-critic=false",
 		"agentic.stub-stages.enabled=false", "agentic.sandbox.network=none", "agentic.sandbox.memory=256MB",
 		"agentic.worker.poll-interval=50ms", "agentic.scm.tokens[github.com]=test-token",
 		"agentic.scm.pull-request-poll-interval=1h", "agentic.scm.feedback.github-secret=hook-secret",

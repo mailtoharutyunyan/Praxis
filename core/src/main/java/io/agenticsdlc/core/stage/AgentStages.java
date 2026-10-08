@@ -32,6 +32,8 @@ public final class AgentStages {
 
 	private static final Pattern RISK = Pattern.compile("RISK:\\s*(LOW|MEDIUM|HIGH)", Pattern.CASE_INSENSITIVE);
 	private static final Pattern RATIONALE = Pattern.compile("RATIONALE:\\s*(.+)", Pattern.CASE_INSENSITIVE);
+	private static final Pattern SPEC_VERDICT = Pattern.compile("^[*_`\\s]*SPEC_VERDICT:\\s*(OK|REVISE)[*_`\\s]*$",
+			Pattern.CASE_INSENSITIVE);
 	/** Only the reply's last line counts, so a verdict quoted earlier (or planted in the diff) is ignored. */
 	private static final Pattern VERDICT = Pattern.compile("^[*_`\\s]*VERDICT:\\s*(APPROVE|CHANGES_REQUESTED)[*_`\\s]*$",
 			Pattern.CASE_INSENSITIVE);
@@ -41,20 +43,27 @@ public final class AgentStages {
 	private final SandboxTools tools;
 	private final RunLimits runLimits;
 	private final AgentLoop.Limits loopLimits;
-	private final boolean testsFirst;
+	private final Options options;
+
+	/**
+	 * Optional quality steps.
+	 *
+	 * @param testsFirst on a run's first implementation round, write failing tests for the change before
+	 *        implementing it (test files only, checked to fail on the unchanged code), then hold the coder to them
+	 * @param specCritic check each new specification with a fresh-context critic and let the planner revise it once
+	 */
+	public record Options(boolean testsFirst, boolean specCritic) {
+		public static final Options NONE = new Options(false, false);
+	}
 
 	public AgentStages(AgentModels models, RunWorkspace workspace, SandboxTools tools, RunLimits runLimits,
 			AgentLoop.Limits loopLimits) {
-		this(models, workspace, tools, runLimits, loopLimits, false);
+		this(models, workspace, tools, runLimits, loopLimits, Options.NONE);
 	}
 
-	/**
-	 * @param testsFirst on a run's first implementation round, write failing tests for the change before
-	 *        implementing it (test files only, checked to fail on the unchanged code), then hold the coder to them
-	 */
 	public AgentStages(AgentModels models, RunWorkspace workspace, SandboxTools tools, RunLimits runLimits,
-			AgentLoop.Limits loopLimits, boolean testsFirst) {
-		this.testsFirst = testsFirst;
+			AgentLoop.Limits loopLimits, Options options) {
+		this.options = Objects.requireNonNull(options, "options");
 		this.models = Objects.requireNonNull(models, "models");
 		this.workspace = Objects.requireNonNull(workspace, "workspace");
 		this.tools = Objects.requireNonNull(tools, "tools");
@@ -106,12 +115,59 @@ public final class AgentStages {
 				history.latestArtifact(RunHistory.SPEC).ifPresent(previous -> brief.append(
 						"\n\nPrevious specification:\n").append(Prompts.block("previous_spec", previous)));
 			});
-			return loop(AgentRole.PLANNER, tools.readOnlyTools(), loopLimits)
-					.run(context, "agent:planner", Prompts.PLANNER, brief.toString(), remainingTokens(context))
+			return plan(context, brief.toString())
+					.flatMap(outcome -> !outcome.completed() || !options.specCritic() ? Mono.just(outcome)
+							: critique(context, brief.toString(), outcome))
 					.flatMap(outcome -> !outcome.completed() ? Mono.just(escalate("planner", outcome))
 							: artifact(context, RunHistory.SPEC, outcome.finalText(), Map.of())
 									.thenReturn(completed(outcome, Map.of("specChars", outcome.finalText().length()))));
 		});
+	}
+
+	private Mono<AgentLoop.Outcome> plan(StageContext context, String brief) {
+		return loop(AgentRole.PLANNER, tools.readOnlyTools(), loopLimits)
+				.run(context, "agent:planner", Prompts.PLANNER, brief, remainingTokens(context));
+	}
+
+	/**
+	 * A fresh-context critic checks the specification against the request and the repository. If it asks for a
+	 * revision, the planner revises once with the findings. The critique is kept for the SPEC gate either way.
+	 */
+	private Mono<AgentLoop.Outcome> critique(StageContext context, String plannerBrief, AgentLoop.Outcome draft) {
+		String brief = Prompts.task(context.task()) + "\n\nSpecification to check:\n" + Prompts.block("spec",
+				draft.finalText());
+		return loop(AgentRole.REVIEWER, tools.readOnlyTools(), loopLimits)
+				.run(context, "agent:spec-critic", Prompts.SPEC_CRITIC, brief, remainingTokens(context))
+				.flatMap(critique -> {
+					Usage spent = draft.usage().plus(critique.usage());
+					boolean revise = critique.completed() && SpecVerdict.REVISE == specVerdict(critique.finalText());
+					String label = !critique.completed() ? "UNAVAILABLE" : revise ? "REVISE" : "OK";
+					Mono<Void> recorded = artifact(context, RunHistory.SPEC_REVIEW,
+							critique.completed() ? critique.finalText() : "The critic stopped: " + abbreviate(critique.finalText()),
+							Map.of("verdict", label));
+					if (!revise) {
+						return recorded.thenReturn(withUsage(draft, spent));
+					}
+					String revision = plannerBrief + "\n\nYou wrote the specification below, and a reviewer found "
+							+ "problems in it. Revise it to resolve them; reply with the complete revised specification only."
+							+ "\n" + Prompts.block("previous_spec", draft.finalText())
+							+ "\n" + Prompts.block("spec_review", critique.finalText());
+					return recorded.then(plan(context, revision))
+							.map(revised -> withUsage(revised, spent.plus(revised.usage())));
+				});
+	}
+
+	enum SpecVerdict { OK, REVISE }
+
+	/** Only the critique's last line counts, like the review verdict; anything unreadable counts as OK. */
+	static SpecVerdict specVerdict(String critique) {
+		String[] lines = critique.strip().split("\\R");
+		Matcher verdict = SPEC_VERDICT.matcher(lines[lines.length - 1]);
+		return verdict.matches() && verdict.group(1).equalsIgnoreCase("REVISE") ? SpecVerdict.REVISE : SpecVerdict.OK;
+	}
+
+	private static AgentLoop.Outcome withUsage(AgentLoop.Outcome outcome, Usage usage) {
+		return new AgentLoop.Outcome(outcome.stop(), outcome.finalText(), usage, outcome.turns());
 	}
 
 	Mono<StageOutcome> implement(StageContext context) {
@@ -120,7 +176,7 @@ public final class AgentStages {
 			RunHistory history = tuple.getT2();
 			boolean firstRound = history.latestArtifactEvent(RunHistory.TESTS).isEmpty()
 					&& history.currentRevision().isEmpty() && history.latestRework().isEmpty();
-			Mono<TestsFirst> tests = testsFirst && firstRound ? writeTests(context, prepared, history)
+			Mono<TestsFirst> tests = options.testsFirst() && firstRound ? writeTests(context, prepared, history)
 					: Mono.just(TestsFirst.NONE);
 			return tests.flatMap(written -> code(context, prepared, history, written));
 		});

@@ -4,7 +4,7 @@ import type { GateDecision, Run, RunEvent } from "../lib/types";
 import { DiffView } from "./DiffView";
 import { Markdown } from "./Markdown";
 
-type Tab = "spec" | "tests" | "diff" | "review";
+type Tab = "spec" | "critique" | "tests" | "diff" | "review";
 
 function latest(events: RunEvent[], kind: string): RunEvent | undefined {
   return [...events].reverse().find((e) => e.type === "ARTIFACT_PRODUCED" && e.payload.kind === kind);
@@ -28,15 +28,16 @@ export function ApprovalPanel(props: {
   const diff = latest(events, "diff");
   const review = latest(events, "review");
   const tests = latest(events, "tests");
+  const critique = latest(events, "spec-review");
   const initial: Tab = run.pendingGate === "SPEC" ? "spec" : "diff";
   const [tab, setTab] = useState<Tab>(initial);
   const [comment, setComment] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const tabs = useMemo(() => ([
-    ["spec", "Specification", spec], ["tests", "Tests first", tests], ["diff", "Changes", diff],
-    ["review", "Review", review],
-  ] as const).filter(([, , artifact]) => artifact !== undefined), [spec, tests, diff, review]);
+    ["spec", "Specification", spec], ["critique", "Spec check", critique], ["tests", "Tests first", tests],
+    ["diff", "Changes", diff], ["review", "Review", review],
+  ] as const).filter(([, , artifact]) => artifact !== undefined), [spec, critique, tests, diff, review]);
 
   const decide = async (decision: GateDecision) => {
     setBusy(true);
@@ -67,6 +68,16 @@ export function ApprovalPanel(props: {
             ))}
           </div>
           {tab === "spec" && spec && <Markdown source={String(spec.payload.content ?? "")} />}
+          {tab === "critique" && critique && (
+            <>
+              <p className="muted small">
+                {critique.payload.verdict === "REVISE"
+                  ? "An automatic check found problems; the planner revised the specification once to address them."
+                  : "An automatic check of the specification against the request and the repository."}
+              </p>
+              <Markdown source={String(critique.payload.content ?? "")} />
+            </>
+          )}
           {tab === "tests" && tests && (
             <>
               <p className="muted small">

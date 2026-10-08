@@ -167,7 +167,7 @@ The reviewer's verdict is read only from the last line of its reply, and if tria
 |---|---|---|
 | Triage | Triage model, request text only. Fails safe to HIGH when unsure. | Risk level and rationale. Untrusted sources always add SPEC. |
 | Context | Host plus sandbox: clone, detect toolchain, set up, baseline build | Toolchain, base commit, baseline result |
-| Spec | Planner with read-only tools | `spec` artifact: EARS requirements, design, tasks, test plan |
+| Spec | Planner with read-only tools, then a fresh-context critic (`agentic.agent.spec-critic`, on by default) | `spec` artifact: EARS requirements, design, tasks, test plan. The critic checks it against the request and the code, looking for ambiguity, contradictions, gaps, untestable criteria and wrong assumptions. If it asks for changes, the planner revises the spec once. Its findings are shown at the SPEC gate (`spec-review` artifact). |
 | Implement: tests first | Test writer (coder model). It can create and edit only test files and has no shell. | Runs on a run's first round (`agentic.agent.tests-first`, on by default). Tests for the acceptance criteria are written, and the app runs them to confirm they fail on the unchanged code, with one retry if they pass. The `tests` artifact records the files and their fingerprints. |
 | Implement | Coder with sandbox tools | Changes in the working copy that make the first-written tests pass. Approver feedback, failed checks, review findings and revision requests are fed back in. |
 | Verify | Deterministic build and test in the sandbox | Passes on to review (`diff` artifact), or sends the run back to implement |

@@ -29,7 +29,7 @@ import reactor.core.publisher.Mono;
 
 /** M7: a suite file is replayed through the real pipeline and graded with hidden checks in the sandbox. */
 @Import({ TestcontainersConfiguration.class, EvalCommandTest.Models.class })
-@SpringBootTest(properties = { "agentic.sandbox.enabled=true", "agentic.agent.enabled=true", "agentic.agent.tests-first=false",
+@SpringBootTest(properties = { "agentic.sandbox.enabled=true", "agentic.agent.enabled=true", "agentic.agent.tests-first=false", "agentic.agent.spec-critic=false",
 		"agentic.stub-stages.enabled=false", "agentic.sandbox.network=none", "agentic.sandbox.memory=256MB",
 		"agentic.worker.poll-interval=50ms", "agentic.worker.concurrency=4" })
 class EvalCommandTest {

@@ -17,6 +17,8 @@ public record RunHistory(List<RunEvent> events) {
 	public static final String SPEC = "spec";
 	public static final String DIFF = "diff";
 	public static final String REVIEW = "review";
+	/** The critic's findings on a new specification; payload {@code verdict}: OK, REVISE or UNAVAILABLE. */
+	public static final String SPEC_REVIEW = "spec-review";
 	/** Tests written before the implementation: payload {@code files} (path to SHA-256), {@code failedFirst}. */
 	public static final String TESTS = "tests";
 	/** Payload key of a diff artifact's SHA-256, so publishing can prove it pushes exactly the approved diff. */
