@@ -244,4 +244,55 @@
 			</plugin>
 		</plugins>
 	</build>
+
+	<profiles>
+		<!-- `./mvnw -Pui package` builds the React UI (../ui) into the jar's static resources. Needs Node and npm. -->
+		<profile>
+			<id>ui</id>
+			<build>
+				<plugins>
+					<plugin>
+						<groupId>org.codehaus.mojo</groupId>
+						<artifactId>exec-maven-plugin</artifactId>
+						<executions>
+							<execution>
+								<id>ui-install</id>
+								<phase>generate-resources</phase>
+								<goals>
+									<goal>exec</goal>
+								</goals>
+								<configuration>
+									<executable>npm</executable>
+									<workingDirectory>${project.basedir}/../ui</workingDirectory>
+									<arguments>
+										<argument>ci</argument>
+										<argument>--no-audit</argument>
+										<argument>--no-fund</argument>
+									</arguments>
+								</configuration>
+							</execution>
+							<execution>
+								<id>ui-build</id>
+								<phase>generate-resources</phase>
+								<goals>
+									<goal>exec</goal>
+								</goals>
+								<configuration>
+									<executable>npm</executable>
+									<workingDirectory>${project.basedir}/../ui</workingDirectory>
+									<environmentVariables>
+										<UI_OUT_DIR>${project.build.outputDirectory}/static</UI_OUT_DIR>
+									</environmentVariables>
+									<arguments>
+										<argument>run</argument>
+										<argument>build</argument>
+									</arguments>
+								</configuration>
+							</execution>
+						</executions>
+					</plugin>
+				</plugins>
+			</build>
+		</profile>
+	</profiles>
 </project>

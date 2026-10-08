@@ -19,7 +19,7 @@ import org.springframework.validation.annotation.Validated;
 public record AgenticProperties(@Valid @NotNull Worker worker, @Valid @NotNull Limits limits,
 		@Valid @NotNull Gates gates, @Valid @NotNull Security security, @Valid @NotNull Events events,
 		@Valid @NotNull StubStages stubStages, @Valid @NotNull Sandbox sandbox, @Valid @NotNull Scm scm,
-		@Valid @NotNull Models models, @Valid @NotNull Agent agent, @Valid @NotNull Jira jira) {
+		@Valid @NotNull Models models, @Valid @NotNull Agent agent, @Valid @NotNull Jira jira, @Valid @NotNull Ui ui) {
 
 	/**
 	 * @param enabled run the background worker on this instance (disable for API-only replicas)
@@ -171,5 +171,15 @@ public record AgenticProperties(@Valid @NotNull Worker worker, @Valid @NotNull L
 
 	public record JiraProject(@NotNull io.agenticsdlc.core.domain.ScmKind kind, @NotNull java.net.URI cloneUrl,
 			@DefaultValue("") String baseBranch) {
+	}
+
+	/**
+	 * Web UI served from this application.
+	 *
+	 * @param authMode {@code oidc} (authorization code + PKCE against {@code issuer}) or {@code dev} (paste a token)
+	 * @param clientId public OIDC client registered for the UI
+	 */
+	public record Ui(@DefaultValue("oidc") @NotBlank String authMode, @DefaultValue("") String issuer,
+			@DefaultValue("") String clientId, @DefaultValue("openid profile") String scope) {
 	}
 }

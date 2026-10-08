@@ -78,6 +78,10 @@ agentic:
     trigger-label: agentic
     # projects:
     #   SHOP: { kind: GITHUB, clone-url: https://github.com/acme/shop.git, base-branch: main }
+  ui:
+    auth-mode: oidc
+    # issuer: https://idp.example.com/realms/agentic
+    # client-id: agentic-ui
   agent:
     enabled: true
     max-turns: 60
