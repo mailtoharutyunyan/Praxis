@@ -102,6 +102,32 @@ describe("RunsPage", () => {
     expect(screen.getByText("Everything")).toBeInTheDocument();
     expect((listRuns.mock.calls[0][3] as AbortSignal).aborted).toBe(true);
   });
+
+  const usage = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, costUsd: 0 };
+
+  it("shows a dash instead of $0.00 when a run used tokens but its cost is unknown", async () => {
+    const unknown = { ...runOf(A, "Unpriced model"), usage: { ...usage, inputTokens: 1200, outputTokens: 300, costUsd: 0 } };
+    const api = { listRuns: vi.fn().mockResolvedValue({ items: [unknown], nextCreatedBefore: null }) } as unknown as Api;
+
+    render(<RunsPage api={api} canSubmit={false} navigate={vi.fn()} />);
+    expect(await screen.findByText("Unpriced model")).toBeInTheDocument();
+
+    expect(screen.getByTitle("Cost unknown for this model")).toHaveTextContent("—");
+    expect(screen.queryByText("$0.00")).toBeNull();
+  });
+
+  it("keeps $0.00 for runs that used no tokens and shows known costs", async () => {
+    const idle = runOf(A, "No tokens yet");
+    const priced = { ...runOf(B, "Priced model"), usage: { ...usage, inputTokens: 1200, outputTokens: 300, costUsd: 0.5 } };
+    const api = { listRuns: vi.fn().mockResolvedValue({ items: [idle, priced], nextCreatedBefore: null }) } as unknown as Api;
+
+    render(<RunsPage api={api} canSubmit={false} navigate={vi.fn()} />);
+    expect(await screen.findByText("No tokens yet")).toBeInTheDocument();
+
+    expect(screen.getByText("$0.00")).toBeInTheDocument();
+    expect(screen.getByText("$0.50")).toBeInTheDocument();
+    expect(screen.queryByTitle("Cost unknown for this model")).toBeNull();
+  });
 });
 
 

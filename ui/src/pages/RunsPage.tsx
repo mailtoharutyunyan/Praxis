@@ -110,7 +110,11 @@ export function RunsPage({ api, canSubmit, navigate }: { api: Api; canSubmit: bo
                     </td>
                     <td>{run.progress && <ProgressBar progress={run.progress} compact />}</td>
                     <td>{run.risk ? <span className={`risk ${run.risk}`}>{run.risk}</span> : <span className="muted">—</span>}</td>
-                    <td className="small" style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>${run.usage.costUsd.toFixed(2)}</td>
+                    <td className="small" style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
+                      {run.usage.inputTokens + run.usage.outputTokens > 0 && run.usage.costUsd === 0
+                        ? <span className="muted" title="Cost unknown for this model">—</span>
+                        : `$${run.usage.costUsd.toFixed(2)}`}
+                    </td>
                   </tr>
                 ))}
                 {runs.length === 0 && (
