@@ -481,6 +481,15 @@ public class DockerSandbox implements Sandbox {
 		if (existing == null) {
 			pullIfMissing(spec.image());
 			Path repo = paths.repo(runId);
+			if (!mounts.usesVolume()) {
+				// Docker would create a missing bind source as root, which the app could then not clean up.
+				try {
+					java.nio.file.Files.createDirectories(repo);
+				}
+				catch (java.io.IOException e) {
+					throw new java.io.UncheckedIOException("cannot create the workspace " + repo, e);
+				}
+			}
 			List<String> env = new ArrayList<>();
 			env.add("HOME=/tmp");
 			env.add("CI=true");

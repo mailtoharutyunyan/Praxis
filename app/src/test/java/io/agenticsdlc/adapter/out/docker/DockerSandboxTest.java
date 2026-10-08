@@ -311,6 +311,7 @@ class DockerSandboxTest {
 		DockerSandbox withProxy = new DockerSandbox(docker, paths, settings("none", "http://egress:3128", ""));
 		try {
 			withProxy.start(proxied, new SandboxSpec(TestRepos.ALPINE, Map.of())).block();
+			assertThat(paths.repo(proxied)).as("created by the app, not as root by Docker").isDirectory();
 			String out = withProxy.exec(proxied, "echo $HTTPS_PROXY $no_proxy; echo $MAVEN_ARGS; cat " + DockerSandbox.MAVEN_SETTINGS,
 					Duration.ofSeconds(30)).block().output();
 			assertThat(out).contains("http://egress:3128 localhost,127.0.0.1", "-gs " + DockerSandbox.MAVEN_SETTINGS,
