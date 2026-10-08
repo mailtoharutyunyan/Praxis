@@ -14,3 +14,7 @@ sum.golang.org
 api.nuget.org
 # Vulnerability database for dependency scanning (OSV-Scanner).
 api.osv.dev
+# Claude Code agent engine (ADR-0008): the CLI in the sandbox calls the Anthropic API. The trade-off: code running in
+# a sandbox can reach this API too, and could send data out through it with a key of its own. Remove this line if no
+# agents run on Claude Code.
+api.anthropic.com

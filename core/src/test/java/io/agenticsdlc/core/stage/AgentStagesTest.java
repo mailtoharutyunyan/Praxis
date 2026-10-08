@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import io.agenticsdlc.core.agent.AgentLoop;
 import io.agenticsdlc.core.agent.AgentMessage;
 import io.agenticsdlc.core.agent.AgentRole;
+import io.agenticsdlc.core.agent.ExternalAgent;
 import io.agenticsdlc.core.agent.ScriptedModel;
 import io.agenticsdlc.core.agent.tools.SandboxTools;
 import io.agenticsdlc.core.application.NewTask;
@@ -54,7 +55,13 @@ class AgentStagesTest {
 		public Mono<Void> remove(UUID runId) {
 			return Mono.empty();
 		}
+
+		@Override
+		public Mono<java.util.Optional<String>> baseFile(UUID runId, String path) {
+			return Mono.just(java.util.Optional.ofNullable(baseFiles.get(path)));
+		}
 	};
+	private final Map<String, String> baseFiles = new java.util.HashMap<>();
 	private AgentStages stages;
 	private StageContext context;
 
@@ -258,6 +265,120 @@ class AgentStagesTest {
 		models.put(AgentRole.PLANNER, stuck);
 		assertThat(stages.specify(context).block()).isInstanceOfSatisfying(StageOutcome.Escalate.class,
 				e -> assertThat(e.reason()).startsWith("planner stopped (STUCK)"));
+	}
+
+	/** Records each call and answers from a script, as an AI CLI in the sandbox would. */
+	private static final class ScriptedExternalAgent implements ExternalAgent {
+
+		final List<String> calls = new java.util.ArrayList<>();
+		final java.util.Deque<Runnable> sideEffects = new java.util.ArrayDeque<>();
+		final java.util.Deque<String> answers = new java.util.ArrayDeque<>();
+		Choice choice = Choice.EXTERNAL;
+
+		@Override
+		public Choice choose(io.agenticsdlc.core.domain.Task task) {
+			return choice;
+		}
+
+		@Override
+		public Mono<AgentLoop.Outcome> run(StageContext context, AgentRole role, Access access, String actor,
+				String system, String brief, long tokenBudget) {
+			calls.add(role + " " + access + " " + actor);
+			if (!sideEffects.isEmpty()) {
+				sideEffects.poll().run();
+			}
+			return Mono.just(new AgentLoop.Outcome(AgentLoop.Stop.COMPLETED, answers.poll(),
+					new io.agenticsdlc.core.domain.Usage(10, 5, 0, 0, 100), 3));
+		}
+	}
+
+	private AgentStages withExternal(ExternalAgent external, AgentStages.Options options) {
+		return new AgentStages(models::get, new RunWorkspace(checkout, sandbox, Duration.ofMinutes(5)),
+				new SandboxTools(sandbox, checkout, Duration.ofMinutes(5)), Fixtures.LIMITS,
+				new AgentLoop.Limits(10, 4000, 2000, 3), options, AgentStages.Memory.NONE, external);
+	}
+
+	@Test
+	void anExternalAgentRunsEveryRoleWithTheLeastAccessItNeeds() {
+		ScriptedExternalAgent cli = new ScriptedExternalAgent();
+		AgentStages onCli = withExternal(cli, new AgentStages.Options(false, true));
+		cli.answers.addAll(List.of("RISK: LOW\nRATIONALE: small", "## Requirements\n1. x", "fine\nSPEC_VERDICT: OK",
+				"changed it", "good\nVERDICT: APPROVE"));
+		diff = "diff --git a/App.java b/App.java\n+++ b/App.java\n+x";
+
+		assertThat(onCli.triage(context).block()).isInstanceOf(StageOutcome.Triaged.class);
+		assertThat(onCli.specify(context).block()).isInstanceOf(StageOutcome.Completed.class);
+		assertThat(onCli.implement(context).block()).isInstanceOf(StageOutcome.Completed.class);
+		assertThat(onCli.review(context).block()).isInstanceOfSatisfying(StageOutcome.Completed.class,
+				c -> assertThat(c.usage().costMicroUsd()).isEqualTo(100));
+
+		assertThat(cli.calls).containsExactly("TRIAGE NONE agent:triage", "PLANNER READ_ONLY agent:planner",
+				"REVIEWER READ_ONLY agent:spec-critic", "CODER FULL agent:coder", "REVIEWER READ_ONLY agent:reviewer");
+		assertThat(models.values()).allSatisfy(model -> assertThat(model.requests).isEmpty());
+	}
+
+	@Test
+	void aFailedExternalTriageEscalatesInsteadOfGuessingTheRisk() {
+		ExternalAgent failing = new ExternalAgent() {
+			@Override
+			public Choice choose(io.agenticsdlc.core.domain.Task task) {
+				return Choice.EXTERNAL;
+			}
+
+			@Override
+			public Mono<AgentLoop.Outcome> run(StageContext context, AgentRole role, Access access, String actor,
+					String system, String brief, long tokenBudget) {
+				return Mono.just(new AgentLoop.Outcome(AgentLoop.Stop.FAILED, "Claude Code exited with code 1",
+						io.agenticsdlc.core.domain.Usage.ZERO, 0));
+			}
+		};
+		assertThat(withExternal(failing, AgentStages.Options.NONE).triage(context).block())
+				.isInstanceOfSatisfying(StageOutcome.Escalate.class,
+						e -> assertThat(e.reason()).isEqualTo("triage stopped (FAILED): Claude Code exited with code 1"));
+	}
+
+	@Test
+	void aTaskNoEngineMayRunEscalatesBeforeAnyWork() {
+		ScriptedExternalAgent cli = new ScriptedExternalAgent();
+		cli.choice = new ExternalAgent.Choice.Unavailable("untrusted tasks never run on the CLI");
+		AgentStages onCli = withExternal(cli, AgentStages.Options.NONE);
+		for (var handler : onCli.handlers()) {
+			assertThat(handler.execute(context).block()).isInstanceOfSatisfying(StageOutcome.Escalate.class,
+					e -> assertThat(e.reason()).isEqualTo("untrusted tasks never run on the CLI"));
+		}
+		assertThat(cli.calls).isEmpty();
+		assertThat(sandbox.commands).isEmpty();
+
+		cli.choice = ExternalAgent.Choice.LOOP;
+		models.get(AgentRole.TRIAGE).thenAnswer("RISK: LOW\nRATIONALE: x");
+		assertThat(onCli.handler(io.agenticsdlc.core.domain.RunState.TRIAGING).execute(context).block())
+				.isInstanceOf(StageOutcome.Triaged.class);
+		assertThat(cli.calls).isEmpty();
+	}
+
+	@Test
+	void aTestWriterThatChangesOtherFilesLosesAllItsChanges() {
+		ScriptedExternalAgent cli = new ScriptedExternalAgent();
+		AgentStages onCli = withExternal(cli, new AgentStages.Options(true, false));
+		String unrelated = "diff --git a/build/out.txt b/build/out.txt\n+++ b/build/out.txt\n+generated\n";
+		diff = unrelated;
+		baseFiles.put("src/App.java", "class App {}\n");
+		sandbox.files.put("src/App.java", "class App { hacked }\n");
+		cli.sideEffects.add(() -> diff = unrelated
+				+ "diff --git a/src/App.java b/src/App.java\n--- a/src/App.java\n+++ b/src/App.java\n-class App {}\n+hacked\n"
+				+ "diff --git a/src/AppTest.java b/src/AppTest.java\n--- /dev/null\n+++ b/src/AppTest.java\n+test\n");
+		cli.sideEffects.add(() -> {
+		});
+		cli.answers.addAll(List.of("wrote tests", "implemented"));
+
+		onCli.implement(context).block();
+
+		assertThat(cli.calls).containsExactly("CODER TESTS_ONLY agent:test-writer", "CODER FULL agent:coder");
+		assertThat(sandbox.files).containsEntry("src/App.java", "class App {}\n");
+		assertThat(sandbox.commands).containsExactly("rm -f -- 'src/AppTest.java'");
+		assertThat(artifacts()).filteredOn(a -> "tests".equals(a.payload().get("kind"))).singleElement()
+				.satisfies(a -> assertThat(String.valueOf(a.payload().get("content")))
+						.contains("not tests (src/App.java)", "discarded"));
 	}
 
 	@Test

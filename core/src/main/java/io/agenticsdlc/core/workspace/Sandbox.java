@@ -2,7 +2,9 @@ package io.agenticsdlc.core.workspace;
 
 import java.time.Duration;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 /**
@@ -35,6 +37,17 @@ public interface Sandbox {
 	/** Run a shell command in {@link #WORKDIR} of the named environment. */
 	default Mono<CommandResult> exec(UUID runId, String environment, String command, Duration timeout) {
 		return exec(runId, command, timeout);
+	}
+
+	/**
+	 * Run a shell command in {@link #WORKDIR} of the {@link SandboxSpec#MAIN} environment and deliver its standard
+	 * output line by line as it is written, for agents that report progress on stdout (ADR-0008). {@code env} is set
+	 * for this command only, never for the container, so it may carry a credential the command needs; it is not part
+	 * of the command line. Completes when the command exits with 0, else errors with {@link CommandFailedException}
+	 * (exit code and the tail of standard error). Cancelling the subscription kills the command.
+	 */
+	default Flux<String> execLines(UUID runId, String command, Map<String, String> env, Duration timeout) {
+		return Flux.error(new UnsupportedOperationException("this sandbox cannot stream command output"));
 	}
 
 	/**

@@ -138,6 +138,13 @@ agentic:
     enabled: true
     max-turns: 60
     max-tool-result-chars: 12000
+    # Agents on Claude Code in the sandbox instead of the API loop (ADR-0008). The AI model connector in the UI, once
+    # saved, decides instead (engine "claude-code" and its token). Needs the CLI in sandboxes (tools-volume/tools-dir)
+    # and the sandbox network with the egress proxy.
+    cli:
+      enabled: false
+      token: ${CLAUDE_CODE_OAUTH_TOKEN:}
+      untrusted-tasks: false
   models:
     providers:
       anthropic:

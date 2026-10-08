@@ -7,8 +7,13 @@ import com.github.dockerjava.api.exception.NotFoundException;
 import com.github.dockerjava.api.model.Capability;
 import com.github.dockerjava.api.model.Frame;
 import com.github.dockerjava.api.model.HostConfig;
+import com.github.dockerjava.api.model.Mount;
+import com.github.dockerjava.api.model.MountType;
+import com.github.dockerjava.api.model.StreamType;
+import com.github.dockerjava.api.model.VolumeOptions;
 import io.agenticsdlc.config.AgenticProperties;
 import io.agenticsdlc.config.WorkspacePaths;
+import io.agenticsdlc.core.workspace.CommandFailedException;
 import io.agenticsdlc.core.workspace.CommandResult;
 import io.agenticsdlc.core.workspace.ProjectConfig;
 import io.agenticsdlc.core.workspace.Sandbox;
@@ -23,11 +28,14 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
@@ -52,6 +60,17 @@ public class DockerSandbox implements Sandbox {
 			+ "then exec timeout -s KILL \"$AGENTIC_TIMEOUT\" sh -c \"$AGENTIC_CMD\"; else exec sh -c \"$AGENTIC_CMD\"; fi";
 
 	static final String MAVEN_SETTINGS = "/tmp/.agentic/maven-settings.xml";
+
+	/** Where {@link Tools} are mounted, read-only, in every environment of a run. */
+	public static final String TOOLS = "/opt/agentic-tools";
+
+	/**
+	 * Programs mounted read-only into every sandbox, whatever its image, such as an AI CLI (ADR-0008): from a Docker
+	 * volume, else from a directory on the Docker host; empty strings for neither.
+	 */
+	public record Tools(String volume, String hostDir) {
+		public static final Tools NONE = new Tools("", "");
+	}
 
 	private final DockerClient docker;
 	private final WorkspacePaths paths;
@@ -80,6 +99,14 @@ public class DockerSandbox implements Sandbox {
 					+ "network with agentic.sandbox.egress-proxy for untrusted tasks", settings.network());
 		}
 		this.user = resolveUser();
+	}
+
+	private Tools tools = Tools.NONE;
+
+	/** @param tools mounted read-only at {@value #TOOLS} in every environment */
+	public DockerSandbox(DockerClient docker, WorkspacePaths paths, AgenticProperties.Sandbox settings, Tools tools) {
+		this(docker, paths, settings);
+		this.tools = Objects.requireNonNull(tools, "tools");
 	}
 
 	static String containerName(UUID runId) {
@@ -114,6 +141,155 @@ public class DockerSandbox implements Sandbox {
 	public Mono<CommandResult> exec(UUID runId, String environment, String command, Duration timeout) {
 		return Mono.fromCallable(() -> execBlocking(containerName(runId, environment), command, timeout, Sandbox.WORKDIR))
 				.subscribeOn(Schedulers.boundedElastic());
+	}
+
+	/**
+	 * Standard output is decoded as UTF-8 and split into lines as frames arrive; standard error is kept (its tail) for
+	 * the failure. The command records its process id first, so that cancelling can kill it, with the processes it
+	 * started, from a second exec: closing the attach stream alone would leave it running in the container.
+	 */
+	@Override
+	public Flux<String> execLines(UUID runId, String command, Map<String, String> env, Duration timeout) {
+		String container = containerName(runId);
+		return Flux.<String>create(sink -> {
+			String pidFile = "/tmp/.agentic/exec-" + UUID.randomUUID() + ".pid";
+			long seconds = Math.max(1, timeout.toSeconds());
+			List<String> variables = new ArrayList<>();
+			env.forEach((name, value) -> variables.add(name + "=" + value));
+			variables.addAll(List.of("AGENTIC_CMD=" + command, "AGENTIC_TIMEOUT=" + seconds, "AGENTIC_PIDFILE=" + pidFile));
+			String execId = docker.execCreateCmd(container)
+					.withCmd("sh", "-c", RECORD_PID + RUN_WITH_TIMEOUT)
+					.withEnv(variables)
+					.withWorkingDir(Sandbox.WORKDIR)
+					.withAttachStdout(true)
+					.withAttachStderr(true)
+					.exec()
+					.getId();
+			Lines lines = new Lines(sink::next);
+			BoundedOutput stderr = new BoundedOutput(4_000);
+			long started = System.nanoTime();
+			AtomicBoolean ended = new AtomicBoolean();
+			ResultCallback.Adapter<Frame> callback = docker.execStartCmd(execId).exec(new ResultCallback.Adapter<>() {
+				@Override
+				public void onNext(Frame frame) {
+					if (frame.getStreamType() == StreamType.STDERR) {
+						stderr.append(new String(frame.getPayload(), StandardCharsets.UTF_8));
+					}
+					else {
+						lines.accept(frame.getPayload());
+					}
+				}
+
+				@Override
+				public void onError(Throwable error) {
+					ended.set(true);
+					super.onError(error);
+					sink.error(error);
+				}
+
+				@Override
+				public void onComplete() {
+					ended.set(true);
+					super.onComplete();
+					lines.flush();
+					Schedulers.boundedElastic().schedule(() -> {
+						try {
+							Duration took = Duration.ofNanos(System.nanoTime() - started);
+							int exitCode = exitCode(execId);
+							if (exitCode == 0) {
+								sink.complete();
+								return;
+							}
+							boolean timedOut = exitCode == 137 && took.compareTo(timeout) >= 0;
+							sink.error(new CommandFailedException(new CommandResult(command, exitCode, stderr.toString(),
+									stderr.truncated(), timedOut, took)));
+						}
+						catch (InterruptedException e) {
+							Thread.currentThread().interrupt();
+							sink.error(e);
+						}
+					});
+				}
+			});
+			sink.onDispose(() -> {
+				if (!ended.get()) {
+					Schedulers.boundedElastic().schedule(() -> kill(container, pidFile));
+				}
+				try {
+					callback.close();
+				}
+				catch (IOException e) {
+					log.debug("closing the output of an exec in {} failed: {}", container, e.getMessage());
+				}
+			});
+		}).subscribeOn(Schedulers.boundedElastic());
+	}
+
+	/** Records the shell's pid, which {@code exec} hands on: the command's own, and its process group's id. */
+	private static final String RECORD_PID = "mkdir -p /tmp/.agentic && echo $$ > \"$AGENTIC_PIDFILE\"; ";
+	/** TERM to the command's process group (else the process), then KILL if it is still there after two seconds. */
+	private static final String KILL_SCRIPT = "p=$(cat \"$AGENTIC_PIDFILE\" 2>/dev/null) || exit 0; "
+			+ "kill -TERM -- -\"$p\" 2>/dev/null || kill -TERM \"$p\" 2>/dev/null; i=0; "
+			+ "while [ $i -lt 20 ] && kill -0 \"$p\" 2>/dev/null; do sleep 0.1; i=$((i+1)); done; "
+			+ "kill -KILL -- -\"$p\" 2>/dev/null || kill -KILL \"$p\" 2>/dev/null; rm -f \"$AGENTIC_PIDFILE\"";
+
+	private void kill(String container, String pidFile) {
+		try {
+			execRaw(container, KILL_SCRIPT, List.of("AGENTIC_PIDFILE=" + pidFile), 0);
+		}
+		catch (InterruptedException e) {
+			Thread.currentThread().interrupt();
+		}
+		catch (RuntimeException e) {
+			log.warn("could not stop a cancelled command in {}: {}", container, e.getMessage());
+		}
+	}
+
+	static final int MAX_LINE_BYTES = 4 * 1024 * 1024;
+
+	/** Splits a byte stream into UTF-8 lines without their line break; a line over {@link #MAX_LINE_BYTES} is dropped. */
+	static final class Lines {
+
+		private final java.util.function.Consumer<String> out;
+		private final java.io.ByteArrayOutputStream line = new java.io.ByteArrayOutputStream();
+		private boolean overlong;
+
+		Lines(java.util.function.Consumer<String> out) {
+			this.out = out;
+		}
+
+		synchronized void accept(byte[] bytes) {
+			for (byte b : bytes) {
+				if (b == '\n') {
+					emit();
+				}
+				else if (line.size() < MAX_LINE_BYTES) {
+					line.write(b);
+				}
+				else {
+					overlong = true;
+				}
+			}
+		}
+
+		/** The last line, if the output did not end with a line break. */
+		synchronized void flush() {
+			if (line.size() > 0 || overlong) {
+				emit();
+			}
+		}
+
+		private void emit() {
+			if (overlong) {
+				log.warn("dropped an output line longer than {} bytes", MAX_LINE_BYTES);
+			}
+			else {
+				String text = line.toString(StandardCharsets.UTF_8);
+				out.accept(text.endsWith("\r") ? text.substring(0, text.length() - 1) : text);
+			}
+			line.reset();
+			overlong = false;
+		}
 	}
 
 	/**
@@ -325,7 +501,7 @@ public class DockerSandbox implements Sandbox {
 					.withWorkingDir(Sandbox.WORKDIR)
 					.withUser(user)
 					.withEnv(env)
-					.withHostConfig(host)
+					.withHostConfig(withTools(host))
 					.exec();
 			log.info("created sandbox {} from {}", name, spec.image());
 		}
@@ -340,6 +516,24 @@ public class DockerSandbox implements Sandbox {
 		if (proxy != null) {
 			writeMavenSettings(name);
 		}
+	}
+
+	/** Adds the read-only tools mount, if any; a volume is mounted as it is, never seeded from the image. */
+	private HostConfig withTools(HostConfig host) {
+		Mount mount;
+		if (!tools.volume().isBlank()) {
+			mount = new Mount().withType(MountType.VOLUME).withSource(tools.volume())
+					.withVolumeOptions(new VolumeOptions().withNoCopy(true));
+		}
+		else if (!tools.hostDir().isBlank()) {
+			mount = new Mount().withType(MountType.BIND).withSource(tools.hostDir());
+		}
+		else {
+			return host;
+		}
+		List<Mount> all = new ArrayList<>(host.getMounts() == null ? List.of() : host.getMounts());
+		all.add(mount.withTarget(TOOLS).withReadOnly(true));
+		return host.withMounts(all);
 	}
 
 	/** Proxy settings in the forms common build tools read; Maven only honours its settings file. */

@@ -187,7 +187,7 @@ public final class ConnectorSettings {
 			}
 		}
 		if (id.equals(ConnectorCatalog.MODELS)) {
-			modelProblems(plain, problems);
+			modelProblems(plain, merged, problems);
 		}
 		if (id.equals(ConnectorCatalog.SLACK) && String.valueOf(plain.getOrDefault("allowedChannels", "")).isBlank()
 				&& String.valueOf(plain.getOrDefault("allowedUsers", "")).isBlank()) {
@@ -202,8 +202,17 @@ public final class ConnectorSettings {
 				.then(Mono.fromSupplier(() -> get(id).orElseThrow()));
 	}
 
-	/** Prices must be numbers, and every model used needs one unless the built-in price list has it. */
-	private void modelProblems(Map<String, Object> plain, List<String> problems) {
+	/**
+	 * Prices must be numbers, and every model used needs one unless the built-in price list has it. On the Claude Code
+	 * engine a token is required, and prices only if an API key is set too: Claude Code reports its own cost, and the
+	 * API engine then serves untrusted tasks (ADR-0008).
+	 */
+	private void modelProblems(Map<String, Object> plain, Map<String, String> secrets, List<String> problems) {
+		boolean cli = ConnectorCatalog.ENGINE_CLAUDE_CODE.equals(plain.get("engine"));
+		if (cli && secrets.getOrDefault("cliToken", "").isBlank()) {
+			problems.add("the Claude Code engine needs a token: run `claude setup-token` and paste the token, or an "
+					+ "Anthropic API key");
+		}
 		boolean priced = true;
 		for (String field : List.of("inputPrice", "outputPrice")) {
 			String text = String.valueOf(plain.getOrDefault(field, ""));
@@ -223,7 +232,8 @@ public final class ConnectorSettings {
 			}
 		}
 		List<String> unpriced = models.stream().filter(m -> !known.contains(m)).distinct().toList();
-		if (!priced && !unpriced.isEmpty()) {
+		boolean apiUsed = !cli || !secrets.getOrDefault("apiKey", "").isBlank();
+		if (apiUsed && !priced && !unpriced.isEmpty()) {
 			problems.add("set the input and output prices (0 for a free local model): the cost limit cannot price "
 					+ String.join(", ", unpriced));
 		}
@@ -301,17 +311,42 @@ public final class ConnectorSettings {
 	}
 
 	public Optional<ModelChoice> model() {
-		return configured(ConnectorCatalog.MODELS).map(c -> {
-			Map<String, String> roles = new LinkedHashMap<>();
-			for (String role : List.of("planner", "reviewer", "triage")) {
-				if (!c.text(role + "Model").isEmpty()) {
-					roles.put(role, c.text(role + "Model"));
-				}
+		return configured(ConnectorCatalog.MODELS).map(c -> new ModelChoice(c.text("provider"), c.text("model"),
+				c.secret("apiKey"), c.text("baseUrl"), c.text("region"), c.text("deployment"), price(c.text("inputPrice")),
+				price(c.text("outputPrice")), roleModels(c)));
+	}
+
+	private static Map<String, String> roleModels(Connector c) {
+		Map<String, String> roles = new LinkedHashMap<>();
+		for (String role : List.of("planner", "reviewer", "triage")) {
+			if (!c.text(role + "Model").isEmpty()) {
+				roles.put(role, c.text(role + "Model"));
 			}
-			return new ModelChoice(c.text("provider"), c.text("model"), c.secret("apiKey"), c.text("baseUrl"),
-					c.text("region"), c.text("deployment"), price(c.text("inputPrice")), price(c.text("outputPrice")),
-					Map.copyOf(roles));
-		});
+		}
+		return Map.copyOf(roles);
+	}
+
+	/**
+	 * Agents on Claude Code, chosen in the AI model connector (ADR-0008).
+	 *
+	 * @param token Claude subscription token or Anthropic API key
+	 * @param apiFallback the connector can also serve the API engine (an API key, or a provider that needs none)
+	 */
+	public record CliChoice(String token, String model, Map<String, String> roleModels, boolean apiFallback) {
+
+		@Override
+		public String toString() {
+			return "CliChoice[token=" + (token.isBlank() ? "" : "***") + ", model=" + model + ", roleModels=" + roleModels
+					+ ", apiFallback=" + apiFallback + "]";
+		}
+	}
+
+	/** Empty unless the AI model connector selects the Claude Code engine. */
+	public Optional<CliChoice> cliEngine() {
+		return configured(ConnectorCatalog.MODELS)
+				.filter(c -> ConnectorCatalog.ENGINE_CLAUDE_CODE.equals(c.text("engine")))
+				.map(c -> new CliChoice(c.secret("cliToken"), c.text("model"), roleModels(c),
+						!c.secret("apiKey").isBlank() || List.of("ollama", "bedrock").contains(c.text("provider"))));
 	}
 
 	private static java.math.BigDecimal price(String text) {

@@ -97,6 +97,8 @@ services:
       # Sandboxes mount each run's directory from this volume, which the app sees at the workspace root.
       AGENTIC_SANDBOX_WORKSPACEVOLUME: agentic-workspaces
       AGENTIC_SANDBOX_RUNTIME: ${AGENTIC_SANDBOX_RUNTIME:-}
+      # Claude Code for the "claude-code" agent engine (ADR-0008), put there by cli-installer; sandboxes mount it read-only.
+      AGENTIC_AGENT_CLI_TOOLSVOLUME: agentic-tools
     volumes:
       - agentic-workspaces:/var/lib/agentic/workspaces
       - agentic-data:/var/lib/agentic/data
@@ -143,6 +145,44 @@ services:
     volumes:
       - agentic-backups:/backups
 
+  # Optional: Claude Code for the "claude-code" agent engine (Settings, AI model; ADR-0008). Downloads the pinned native
+  # build, checks it against the SHA-256 in the release manifest, puts it in the agentic-tools volume, which every sandbox
+  # mounts read-only at /opt/agentic-tools, and exits. Run it once, and again after changing the version:
+  #   docker compose --profile claude-code up cli-installer
+  # The build is for glibc. If your toolchain images are Alpine (musl), set CLAUDE_CODE_PLATFORM=linux-x64-musl (or
+  # linux-arm64-musl); one build serves every sandbox, so the images have to agree.
+  cli-installer:
+    image: alpine:3.24.2
+    profiles: [claude-code]
+    restart: 'no'
+    environment:
+      CLAUDE_CODE_VERSION: ${CLAUDE_CODE_VERSION:-2.1.282}
+      CLAUDE_CODE_PLATFORM: ${CLAUDE_CODE_PLATFORM:-}
+    entrypoint: ['sh', '-euc']
+    command:
+      - |
+        platform="$${CLAUDE_CODE_PLATFORM:-}"
+        if [ -z "$$platform" ]; then
+          case "$$(uname -m)" in
+            x86_64|amd64) platform=linux-x64 ;;
+            aarch64|arm64) platform=linux-arm64 ;;
+            *) echo "unsupported architecture $$(uname -m)" >&2; exit 1 ;;
+          esac
+        fi
+        if [ "$$(cat /tools/VERSION 2>/dev/null)" = "$$CLAUDE_CODE_VERSION $$platform" ]; then
+          echo "Claude Code $$CLAUDE_CODE_VERSION ($$platform) is installed"; exit 0
+        fi
+        apk add --no-cache curl jq >/dev/null
+        release=https://downloads.claude.ai/claude-code-releases/$$CLAUDE_CODE_VERSION
+        checksum=$$(curl -fsSL "$$release/manifest.json" | jq -er --arg p "$$platform" '.platforms[$$p].checksum')
+        curl -fsSL -o /tmp/claude "$$release/$$platform/claude"
+        echo "$$checksum  /tmp/claude" | sha256sum -c -
+        install -m 0755 /tmp/claude /tools/claude.new && mv /tools/claude.new /tools/claude
+        echo "$$CLAUDE_CODE_VERSION $$platform" > /tools/VERSION
+        echo "installed Claude Code $$CLAUDE_CODE_VERSION ($$platform)"
+    volumes:
+      - agentic-tools:/tools
+
 volumes:
   postgres-data: {}
   agentic-backups: {}
@@ -150,6 +190,9 @@ volumes:
   # Named explicitly: the app refers to it by name when it starts sandboxes.
   agentic-workspaces:
     name: agentic-workspaces
+  # Named explicitly too: sandboxes mount it by name (agentic.agent.cli.tools-volume).
+  agentic-tools:
+    name: agentic-tools
 
 networks:
   default: {}

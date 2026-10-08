@@ -178,6 +178,50 @@ public class JGitRepositoryCheckout implements RepositoryCheckout, ChangePublish
 	}
 
 	@Override
+	public Mono<Optional<String>> baseFile(UUID runId, String path) {
+		return Mono.fromCallable(() -> baseFileBlocking(runId, path)).subscribeOn(Schedulers.boundedElastic());
+	}
+
+	/** Read from the object database of the primary repository, or of the companion whose directory holds the path. */
+	private Optional<String> baseFileBlocking(UUID runId, String path) throws IOException {
+		Tree owner = null;
+		String inTree = path;
+		for (Tree companion : companionsOnDisk(runId)) {
+			if (path.startsWith(companion.path() + "/")) {
+				owner = companion;
+				inTree = path.substring(companion.path().length() + 1);
+			}
+		}
+		try (Repository repository = owner == null ? open(runId) : open(owner); RevWalk walk = new RevWalk(repository)) {
+			RevTree tree = walk.parseCommit(ObjectId.fromString(repository.getConfig().getString(SECTION, null,
+					"baseCommit"))).getTree();
+			try (TreeWalk entry = TreeWalk.forPath(repository, inTree, tree)) {
+				if (entry == null) {
+					return Optional.empty();
+				}
+				FileMode mode = entry.getFileMode(0);
+				if (mode != FileMode.REGULAR_FILE && mode != FileMode.EXECUTABLE_FILE) {
+					throw new IllegalStateException(path + " is not a regular file in the base commit");
+				}
+				byte[] bytes = repository.open(entry.getObjectId(0)).getBytes(MAX_BASE_FILE_BYTES);
+				var decoder = StandardCharsets.UTF_8.newDecoder();
+				try {
+					String text = decoder.decode(java.nio.ByteBuffer.wrap(bytes)).toString();
+					if (text.indexOf('\0') >= 0) {
+						throw new IllegalStateException(path + " is a binary file");
+					}
+					return Optional.of(text);
+				}
+				catch (java.nio.charset.CharacterCodingException e) {
+					throw new IllegalStateException(path + " is not UTF-8 text", e);
+				}
+			}
+		}
+	}
+
+	private static final int MAX_BASE_FILE_BYTES = 4 * 1024 * 1024;
+
+	@Override
 	public Mono<Void> remove(UUID runId) {
 		return Mono.<Void>fromRunnable(() -> deleteRecursively(paths.runDir(runId)))
 				.subscribeOn(Schedulers.boundedElastic());

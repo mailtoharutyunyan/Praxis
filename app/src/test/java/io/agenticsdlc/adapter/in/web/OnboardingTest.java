@@ -177,12 +177,29 @@ class OnboardingTest {
 				.bodyValue(Map.of("config", Map.of("provider", "ollama", "model", "qwen3", "baseUrl",
 						"http://ollama:11434"), "secrets", Map.of()))
 				.exchange().expectStatus().isBadRequest();
+		// The Claude Code engine needs its token but no prices: the CLI reports its own cost (ADR-0008).
+		admin().put().uri("/api/v1/connectors/models").contentType(MediaType.APPLICATION_JSON)
+				.bodyValue(Map.of("config", Map.of("provider", "anthropic", "model", "claude-unlisted", "engine",
+						"claude-code"), "secrets", Map.of()))
+				.exchange().expectStatus().isBadRequest();
+		String saved = admin().put().uri("/api/v1/connectors/models").contentType(MediaType.APPLICATION_JSON)
+				.bodyValue(Map.of("config", Map.of("provider", "anthropic", "model", "claude-unlisted", "engine",
+						"claude-code", "reviewerModel", "claude-other"), "secrets", Map.of("cliToken", "cli-token-example")))
+				.exchange().expectStatus().isOk().expectBody(String.class).returnResult().getResponseBody();
+		assertThat(saved).doesNotContain("cli-token-example");
+		assertThat(settings.cliEngine()).hasValueSatisfying(cli -> {
+			assertThat(cli.token()).isEqualTo("cli-token-example");
+			assertThat(cli.roleModels()).containsEntry("reviewer", "claude-other");
+			assertThat(cli.apiFallback()).isFalse();
+			assertThat(cli.toString()).doesNotContain("cli-token-example");
+		});
 		admin().put().uri("/api/v1/connectors/models").contentType(MediaType.APPLICATION_JSON)
 				.bodyValue(Map.of("config", Map.of("provider", "ollama", "model", "qwen3", "baseUrl",
 						"http://ollama:11434", "inputPrice", "0", "outputPrice", "0", "triageModel", "qwen3:4b"),
 						"secrets", Map.of()))
 				.exchange().expectStatus().isOk();
 		assertThat(settings.model().orElseThrow().roleModels()).containsEntry("triage", "qwen3:4b");
+		assertThat(settings.cliEngine()).as("the engine defaults to the API").isEmpty();
 		admin().put().uri("/api/v1/connectors/app").contentType(MediaType.APPLICATION_JSON)
 				.bodyValue(Map.of("config", Map.of("publicUrl", "http://localhost:8080"), "secrets", Map.of()))
 				.exchange().expectStatus().isOk();

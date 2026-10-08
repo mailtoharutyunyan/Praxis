@@ -16,6 +16,10 @@ public final class ConnectorCatalog {
 	public static final String SLACK = "slack";
 	public static final String WEBHOOKS = "webhooks";
 
+	/** Agent engines of the model connector (ADR-0008). */
+	public static final String ENGINE_API = "api";
+	public static final String ENGINE_CLAUDE_CODE = "claude-code";
+
 	/**
 	 * @param type text, url, secret, select, list
 	 * @param options for select
@@ -73,8 +77,14 @@ public final class ConnectorCatalog {
 							Field.select("provider", "Provider", List.of("anthropic", "openai", "azure-openai",
 									"bedrock", "google-genai", "ollama"), "anthropic", null),
 							Field.text("model", "Model", true, "e.g. claude-opus-5-5, gpt-5, llama3.3", "claude-opus-5-5"),
+							Field.select("engine", "Agent engine", List.of(ENGINE_API, ENGINE_CLAUDE_CODE), ENGINE_API,
+									"api: this app's agent loop calls the provider's API. claude-code: agents run Claude "
+											+ "Code in each run's sandbox with the token below; tasks from Jira, Slack "
+											+ "and other outside sources still use the API, if a key is set"),
 							Field.secret("apiKey", "API key", false, "Not needed for Ollama or for Bedrock with "
 									+ "AWS credentials from the environment"),
+							Field.secret("cliToken", "Claude Code token", false, "For the claude-code engine: a Claude "
+									+ "subscription token from `claude setup-token`, or an Anthropic API key"),
 							Field.url("baseUrl", "Base URL", false, "Ollama, Azure OpenAI endpoint or a gateway"),
 							Field.text("region", "AWS region", false, "Bedrock only", null),
 							Field.text("deployment", "Deployment", false, "Azure OpenAI only", null),

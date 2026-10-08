@@ -161,6 +161,86 @@ class DockerSandboxTest {
 	}
 
 	@Test
+	void streamsOutputLinesWithAnEnvironmentOnlyThatCommandSees() {
+		List<String> lines = sandbox.execLines(runId, "echo \"one $AGENTIC_TEST_SECRET\"; echo two >&2; printf 'three\\nfour'",
+				Map.of("AGENTIC_TEST_SECRET", "s3cr3t"), Duration.ofSeconds(30)).collectList().block();
+		assertThat(lines).containsExactly("one s3cr3t", "three", "four");
+		assertThat(run("echo \"[$AGENTIC_TEST_SECRET]\"", Duration.ofSeconds(30)).output()).contains("[]");
+		assertThat(docker.inspectContainerCmd(DockerSandbox.containerName(runId)).exec().getConfig().getEnv())
+				.noneMatch(e -> e.contains("s3cr3t"));
+	}
+
+	@Test
+	void aFailedStreamedCommandReportsItsExitAndErrorOutput() {
+		assertThatThrownBy(() -> sandbox.execLines(runId, "echo partial; echo broken >&2; exit 3", Map.of(),
+				Duration.ofSeconds(30)).collectList().block())
+				.isInstanceOfSatisfying(io.agenticsdlc.core.workspace.CommandFailedException.class, e -> {
+					assertThat(e.result().exitCode()).isEqualTo(3);
+					assertThat(e.result().output()).contains("broken").doesNotContain("partial");
+				});
+	}
+
+	/** Closing the attach stream alone would leave the command running; cancelling kills its whole process group. */
+	@Test
+	void cancellingAStreamedCommandKillsIt() throws Exception {
+		String first = sandbox.execLines(runId, "sleep 301 & sleep 302 & echo started; wait", Map.of(),
+				Duration.ofMinutes(5)).blockFirst(Duration.ofSeconds(30));
+		assertThat(first).isEqualTo("started");
+		String left = "";
+		for (int i = 0; i < 50; i++) {
+			left = run("ps -o args | grep -c '[s]leep 30[12]' || true", Duration.ofSeconds(30)).output().strip();
+			if (left.equals("0")) {
+				break;
+			}
+			Thread.sleep(200);
+		}
+		assertThat(left).as("sleeps still running").isEqualTo("0");
+	}
+
+	@Test
+	void streamedCommandsTimeOut() {
+		assertThatThrownBy(() -> sandbox.execLines(runId, "echo begun; sleep 30", Map.of(), Duration.ofSeconds(1))
+				.collectList().block())
+				.isInstanceOfSatisfying(io.agenticsdlc.core.workspace.CommandFailedException.class,
+						e -> assertThat(e.result().timedOut()).isTrue());
+	}
+
+	@Test
+	void linesSplitAcrossFramesAndMultiByteCharacters() {
+		List<String> lines = new java.util.ArrayList<>();
+		DockerSandbox.Lines splitter = new DockerSandbox.Lines(lines::add);
+		byte[] text = "größe\r\nzwei\n".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+		splitter.accept(java.util.Arrays.copyOfRange(text, 0, 3));
+		splitter.accept(java.util.Arrays.copyOfRange(text, 3, text.length));
+		splitter.accept("rest".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+		splitter.flush();
+		assertThat(lines).containsExactly("größe", "zwei", "rest");
+	}
+
+	/** An AI CLI on the host (or in a volume) is in every sandbox, read-only, whatever the image (ADR-0008). */
+	@Test
+	void toolsAreMountedReadOnly() throws Exception {
+		Path tools = tmp.resolve("tools");
+		Files.createDirectories(tools);
+		Files.writeString(tools.resolve("hello-tool"), "#!/bin/sh\necho tool says hi\n");
+		tools.resolve("hello-tool").toFile().setExecutable(true, false);
+		UUID run = UUID.randomUUID();
+		Files.createDirectories(paths.repo(run));
+		DockerSandbox withTools = new DockerSandbox(docker, paths, settings("none", "", ""),
+				new DockerSandbox.Tools("", tools.toString()));
+		try {
+			withTools.start(run, new SandboxSpec(TestRepos.ALPINE, Map.of())).block();
+			CommandResult result = withTools.exec(run, DockerSandbox.TOOLS + "/hello-tool && touch " + DockerSandbox.TOOLS
+					+ "/x", Duration.ofSeconds(30)).block();
+			assertThat(result.output()).contains("tool says hi", "Read-only file system");
+			assertThat(result.succeeded()).isFalse();
+		}
+		finally {
+			withTools.destroy(run).block();
+		}
+	}
+
+	@Test
 	void reportsExitCodesAndStderr() {
 		CommandResult failed = run("echo boom >&2; exit 3", Duration.ofSeconds(30));
 		assertThat(failed.exitCode()).isEqualTo(3);

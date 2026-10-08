@@ -4,6 +4,8 @@ import io.agenticsdlc.core.agent.AgentLoop;
 import io.agenticsdlc.core.agent.AgentModels;
 import io.agenticsdlc.core.agent.AgentRole;
 import io.agenticsdlc.core.agent.AgentTool;
+import io.agenticsdlc.core.agent.ExternalAgent;
+import io.agenticsdlc.core.agent.ExternalAgent.Access;
 import io.agenticsdlc.core.agent.tools.SandboxTools;
 import io.agenticsdlc.core.domain.RiskLevel;
 import io.agenticsdlc.core.domain.RunEventType;
@@ -26,8 +28,9 @@ import reactor.core.publisher.Mono;
 
 /**
  * The model-driven stages: triage, specification, implementation and review. Each runs an {@link AgentLoop} with
- * the role's model and tools, records its product as an {@code ARTIFACT_PRODUCED} event for the gates, and maps
- * loop limits to escalation so a human decides what happens next.
+ * the role's model and tools, or the {@link ExternalAgent} with the matching access when the task runs on one
+ * (ADR-0008), records its product as an {@code ARTIFACT_PRODUCED} event for the gates, and maps loop limits to
+ * escalation so a human decides what happens next.
  */
 public final class AgentStages {
 
@@ -71,11 +74,19 @@ public final class AgentStages {
 	}
 
 	private Memory memory = Memory.NONE;
+	private ExternalAgent external = ExternalAgent.NONE;
 
 	public AgentStages(AgentModels models, RunWorkspace workspace, SandboxTools tools, RunLimits runLimits,
 			AgentLoop.Limits loopLimits, Options options, Memory memory) {
 		this(models, workspace, tools, runLimits, loopLimits, options);
 		this.memory = Objects.requireNonNull(memory, "memory");
+	}
+
+	/** @param external runs the agents of the tasks it chooses (ADR-0008); {@link ExternalAgent#NONE} for none */
+	public AgentStages(AgentModels models, RunWorkspace workspace, SandboxTools tools, RunLimits runLimits,
+			AgentLoop.Limits loopLimits, Options options, Memory memory, ExternalAgent external) {
+		this(models, workspace, tools, runLimits, loopLimits, options, memory);
+		this.external = Objects.requireNonNull(external, "external");
 	}
 
 	public AgentStages(AgentModels models, RunWorkspace workspace, SandboxTools tools, RunLimits runLimits,
@@ -102,9 +113,15 @@ public final class AgentStages {
 		// One answer, no tools: triage reads only the request text.
 		AgentLoop.Limits oneTurn = new AgentLoop.Limits(1, loopLimits.maxOutputTokens(), loopLimits.maxToolResultChars(),
 				loopLimits.maxRepeats());
-		return loop(AgentRole.TRIAGE, List.of(), oneTurn)
-				.run(context, "agent:triage", Prompts.TRIAGE, Prompts.task(context.task()), remainingTokens(context))
+		// An external agent runs in the sandbox, so it is brought up first; PREPARING_CONTEXT finds it ready.
+		Mono<?> ready = external.choose(context.task()) instanceof ExternalAgent.Choice.External
+				? workspace.prepare(context) : Mono.empty();
+		return ready.then(Mono.defer(() -> agent(context, AgentRole.TRIAGE, Access.NONE, List.of(), oneTurn,
+				"agent:triage", Prompts.TRIAGE, Prompts.task(context.task()))))
 				.map(outcome -> {
+					if (outcome.stop() == AgentLoop.Stop.FAILED) {
+						return escalate("triage", outcome);
+					}
 					Matcher rationale = RATIONALE.matcher(outcome.finalText());
 					// Fail safe: an unreadable assessment gets every gate, and if several levels appear the highest wins.
 					RiskLevel level = RISK.matcher(outcome.finalText()).results()
@@ -118,7 +135,9 @@ public final class AgentStages {
 					}
 					return new StageOutcome.Triaged(level, rationale.find() ? rationale.group(1).strip() : "",
 							outcome.usage());
-				});
+				})
+				.onErrorResume(RunWorkspace.UndetectableBuildException.class,
+						e -> Mono.just(new StageOutcome.Escalate(e.getMessage(), Usage.ZERO)));
 	}
 
 	/** What every agent stage starts from: the prepared workspace, the run's history and recalled repository facts. */
@@ -172,8 +191,8 @@ public final class AgentStages {
 	}
 
 	private Mono<AgentLoop.Outcome> plan(StageContext context, String brief) {
-		return loop(AgentRole.PLANNER, withMemory(tools.readOnlyTools()), loopLimits)
-				.run(context, "agent:planner", Prompts.PLANNER, brief, remainingTokens(context));
+		return agent(context, AgentRole.PLANNER, Access.READ_ONLY, withMemory(tools.readOnlyTools()), loopLimits,
+				"agent:planner", Prompts.PLANNER, brief);
 	}
 
 	/**
@@ -183,8 +202,8 @@ public final class AgentStages {
 	private Mono<AgentLoop.Outcome> critique(StageContext context, String plannerBrief, AgentLoop.Outcome draft) {
 		String brief = Prompts.task(context.task()) + "\n\nSpecification to check:\n" + Prompts.block("spec",
 				draft.finalText());
-		return loop(AgentRole.REVIEWER, tools.readOnlyTools(), loopLimits)
-				.run(context, "agent:spec-critic", Prompts.SPEC_CRITIC, brief, remainingTokens(context))
+		return agent(context, AgentRole.REVIEWER, Access.READ_ONLY, tools.readOnlyTools(), loopLimits,
+				"agent:spec-critic", Prompts.SPEC_CRITIC, brief)
 				.flatMap(critique -> {
 					Usage spent = draft.usage().plus(critique.usage());
 					boolean revise = critique.completed() && SpecVerdict.REVISE == specVerdict(critique.finalText());
@@ -241,8 +260,8 @@ public final class AgentStages {
 		history.latestChangeRequest().ifPresent(feedback -> brief.append("\n\n").append(feedback));
 		history.currentRevision().ifPresent(revision -> brief.append(Prompts.revision(revision)));
 		brief.append(written.briefForCoder());
-		return loop(AgentRole.CODER, withMemory(tools.coderTools()), loopLimits)
-				.run(context, "agent:coder", Prompts.CODER, brief.toString(), remainingTokens(context))
+		return agent(context, AgentRole.CODER, Access.FULL, withMemory(tools.coderTools()), loopLimits, "agent:coder",
+				Prompts.CODER, brief.toString())
 				.map(outcome -> new AgentLoop.Outcome(outcome.stop(), outcome.finalText(),
 						outcome.usage().plus(written.usage()), outcome.turns()))
 				.flatMap(outcome -> {
@@ -278,40 +297,53 @@ public final class AgentStages {
 				"\n\nApproved specification:\n").append(Prompts.block("spec", spec)));
 		appendRepository(brief, prepared);
 		brief.append(memoryNote);
-		return writeTests(context, prepared, brief.toString(), Usage.ZERO, 1);
+		return workspace.diff(context).flatMap(before -> writeTests(context, prepared, brief.toString(), before,
+				Usage.ZERO, 1));
 	}
 
-	private Mono<TestsFirst> writeTests(StageContext context, RunWorkspace.Prepared prepared, String brief, Usage spent,
-			int attempt) {
-		return loop(AgentRole.CODER, tools.testWriterTools(TestPaths::isTest), loopLimits)
-				.run(context, "agent:test-writer", Prompts.TEST_WRITER, brief, remainingTokens(context))
-				.flatMap(outcome -> {
+	/**
+	 * @param before the working copy's diff before the first attempt. Everything the test writer changes beyond it
+	 *        must be a test: its tools enforce that, and an external agent is held to it here. If it changed anything
+	 *        else, all its changes are put back and the coder starts without tests.
+	 */
+	private Mono<TestsFirst> writeTests(StageContext context, RunWorkspace.Prepared prepared, String brief,
+			String before, Usage spent, int attempt) {
+		return agent(context, AgentRole.CODER, Access.TESTS_ONLY, tools.testWriterTools(TestPaths::isTest), loopLimits,
+				"agent:test-writer", Prompts.TEST_WRITER, brief)
+				.flatMap(outcome -> workspace.diff(context).flatMap(diff -> {
 					Usage usage = spent.plus(outcome.usage());
+					List<String> written = TestPaths.changedBetween(before, diff);
+					List<String> outside = written.stream().filter(file -> !TestPaths.isTest(file)).toList();
+					if (!outside.isEmpty()) {
+						return workspace.restore(context, written)
+								.then(testsArtifact(context, Map.of(), false, "The test writer changed files that are "
+										+ "not tests (" + String.join(", ", outside) + "), so all its changes were "
+										+ "discarded."))
+								.thenReturn(new TestsFirst(usage, List.of(), false));
+					}
 					if (!outcome.completed() || outcome.finalText().strip().startsWith("NO_TESTS")) {
 						String reason = outcome.completed() ? outcome.finalText().strip()
 								: "the test writer stopped: " + abbreviate(outcome.finalText());
 						return testsArtifact(context, Map.of(), false, reason).thenReturn(new TestsFirst(usage, List.of(),
 								false));
 					}
-					return workspace.diff(context).flatMap(diff -> {
-						List<String> files = TestPaths.changedFiles(diff);
-						if (files.isEmpty()) {
-							return testsArtifact(context, Map.of(), false, "no tests were written")
-									.thenReturn(new TestsFirst(usage, List.of(), false));
+					List<String> files = TestPaths.changedFiles(diff);
+					if (files.isEmpty()) {
+						return testsArtifact(context, Map.of(), false, "no tests were written")
+								.thenReturn(new TestsFirst(usage, List.of(), false));
+					}
+					return workspace.verify(context, prepared, files).flatMap(results -> {
+						var last = results.getLast();
+						if (last.succeeded() && attempt == 1) {
+							return writeTests(context, prepared, brief + "\n\nYour tests already pass on the "
+									+ "current code, so they do not capture the change. Make them check the new "
+									+ "behaviour. The test run said:\n" + Prompts.block("test_output", last.tail(4_000)),
+									before, usage, 2);
 						}
-						return workspace.verify(context, prepared, files).flatMap(results -> {
-							var last = results.getLast();
-							if (last.succeeded() && attempt == 1) {
-								return writeTests(context, prepared, brief + "\n\nYour tests already pass on the "
-										+ "current code, so they do not capture the change. Make them check the new "
-										+ "behaviour. The test run said:\n" + Prompts.block("test_output", last.tail(4_000)),
-										usage, 2);
-							}
-							return fingerprints(context, files).flatMap(prints -> testsArtifact(context, prints,
-									!last.succeeded(), diff).thenReturn(new TestsFirst(usage, files, !last.succeeded())));
-						});
+						return fingerprints(context, files).flatMap(prints -> testsArtifact(context, prints,
+								!last.succeeded(), diff).thenReturn(new TestsFirst(usage, files, !last.succeeded())));
 					});
-				});
+				}));
 	}
 
 	private Mono<Map<String, Object>> fingerprints(StageContext context, List<String> files) {
@@ -368,9 +400,8 @@ public final class AgentStages {
 									.append("\nWeigh these in your review."));
 					brief.append("\n\nReview the current changes (show_diff).");
 					return artifact(context, RunHistory.DIFF, diff, Map.of(RunHistory.FINGERPRINT, RunHistory.fingerprint(diff)))
-							.then(loop(AgentRole.REVIEWER, withMemory(tools.readOnlyTools()), loopLimits)
-									.run(context, "agent:reviewer", Prompts.REVIEWER, brief.toString(),
-											remainingTokens(context)))
+							.then(agent(context, AgentRole.REVIEWER, Access.READ_ONLY, withMemory(tools.readOnlyTools()),
+									loopLimits, "agent:reviewer", Prompts.REVIEWER, brief.toString()))
 							.flatMap(outcome -> {
 								if (!outcome.completed()) {
 									return Mono.just(escalate("reviewer", outcome));
@@ -391,8 +422,19 @@ public final class AgentStages {
 		return verdict.matches() && verdict.group(1).equalsIgnoreCase("APPROVE");
 	}
 
-	private AgentLoop loop(AgentRole role, List<AgentTool> roleTools, AgentLoop.Limits limits) {
-		return new AgentLoop(models.forRole(role), roleTools, limits);
+	/**
+	 * One agent call on the task's engine: an {@link AgentLoop} with the role's model, tools and limits, or the external
+	 * agent with the matching access. Either may spend what is left of the run's token budget.
+	 */
+	private Mono<AgentLoop.Outcome> agent(StageContext context, AgentRole role, Access access, List<AgentTool> roleTools,
+			AgentLoop.Limits limits, String actor, String system, String brief) {
+		long budget = remainingTokens(context);
+		return switch (external.choose(context.task())) {
+			case ExternalAgent.Choice.Loop loop -> new AgentLoop(models.forRole(role), roleTools, limits)
+					.run(context, actor, system, brief, budget);
+			case ExternalAgent.Choice.External cli -> external.run(context, role, access, actor, system, brief, budget);
+			case ExternalAgent.Choice.Unavailable(String reason) -> Mono.error(new IllegalStateException(reason));
+		};
 	}
 
 	private long remainingTokens(StageContext context) {
@@ -460,7 +502,8 @@ public final class AgentStages {
 		return flat.length() <= 500 ? flat : flat.substring(0, 500) + "…";
 	}
 
-	private static StageHandler stage(RunState stage, Function<StageContext, Mono<StageOutcome>> body) {
+	/** A stage of a task that no engine may run escalates before it does anything. */
+	private StageHandler stage(RunState stage, Function<StageContext, Mono<StageOutcome>> body) {
 		return new StageHandler() {
 			@Override
 			public RunState stage() {
@@ -469,7 +512,8 @@ public final class AgentStages {
 
 			@Override
 			public Mono<StageOutcome> execute(StageContext context) {
-				return Mono.defer(() -> body.apply(context));
+				return Mono.defer(() -> external.choose(context.task()) instanceof ExternalAgent.Choice.Unavailable(
+						String reason) ? Mono.just(new StageOutcome.Escalate(reason, Usage.ZERO)) : body.apply(context));
 			}
 		};
 	}

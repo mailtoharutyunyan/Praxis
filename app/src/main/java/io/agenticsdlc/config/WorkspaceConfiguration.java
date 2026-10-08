@@ -61,9 +61,12 @@ class WorkspaceConfiguration {
 				scm.authorEmail());
 	}
 
+	/** With the AI CLI's volume or directory mounted read-only in every sandbox (ADR-0008). */
 	@Bean
-	DockerSandbox sandbox(DockerClient docker, WorkspacePaths paths, AgenticProperties properties) {
-		return new DockerSandbox(docker, paths, properties.sandbox());
+	DockerSandbox sandbox(DockerClient docker, WorkspacePaths paths, AgenticProperties properties,
+			CliAgentProperties cli) {
+		return new DockerSandbox(docker, paths, properties.sandbox(),
+				new DockerSandbox.Tools(cli.toolsVolume(), cli.toolsDir()));
 	}
 
 	@Bean

@@ -29,7 +29,8 @@ public final class AgentLoop {
 	/** Recent tool-result messages kept verbatim; older ones are reduced to a short stub. */
 	static final int KEEP_RECENT_TOOL_RESULTS = 6;
 	static final int CLEARED_RESULT_CHARS = 300;
-	static final int EVENT_PREVIEW_CHARS = 2_000;
+	/** Longest tool argument or output recorded in a run event; the model may see more. */
+	public static final int EVENT_PREVIEW_CHARS = 2_000;
 
 	private final AgentModel model;
 	private final Map<String, AgentTool> tools;
@@ -54,7 +55,9 @@ public final class AgentLoop {
 		COMPLETED,
 		MAX_TURNS,
 		BUDGET_EXHAUSTED,
-		STUCK
+		STUCK,
+		/** The agent could not run or did not finish: an {@link ExternalAgent} failed, timed out or reported an error. */
+		FAILED
 	}
 
 	public record Outcome(Stop stop, String finalText, Usage usage, int turns) {

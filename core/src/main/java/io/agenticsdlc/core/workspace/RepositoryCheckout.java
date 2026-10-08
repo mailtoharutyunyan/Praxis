@@ -1,6 +1,7 @@
 package io.agenticsdlc.core.workspace;
 
 import io.agenticsdlc.core.domain.RunView;
+import java.util.Optional;
 import java.util.UUID;
 import reactor.core.publisher.Mono;
 
@@ -16,6 +17,15 @@ public interface RepositoryCheckout {
 
 	/** Unified diff of the working tree against the base commit, including new files. Empty if unchanged. */
 	Mono<String> diff(UUID runId);
+
+	/**
+	 * A text file as it is in the base commit, read on the host; empty if the base has no such file. Paths are relative
+	 * to the work tree, companions' under their directory. Errors if the base has something other than a text file
+	 * there.
+	 */
+	default Mono<Optional<String>> baseFile(UUID runId, String path) {
+		return Mono.error(new UnsupportedOperationException("this checkout cannot read the base commit"));
+	}
 
 	/** Delete the working copy and its git metadata. Idempotent. */
 	Mono<Void> remove(UUID runId);

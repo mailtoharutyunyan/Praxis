@@ -86,6 +86,19 @@ class JGitRepositoryCheckoutTest {
 				.doesNotContain("build.log");
 	}
 
+	/** What a file was at the base commit, for putting it back; read from git, whatever the work tree has now. */
+	@Test
+	void baseFilesComeFromTheBaseCommit() throws Exception {
+		checkout.checkout(view).block();
+		Path repoDir = paths.repo(view.run().id());
+		Files.writeString(repoDir.resolve("hello.txt"), "changed\n");
+		Files.writeString(repoDir.resolve("added.txt"), "new\n");
+
+		assertThat(checkout.baseFile(view.run().id(), "hello.txt").block()).contains("hello world\n");
+		assertThat(checkout.baseFile(view.run().id(), "added.txt").block()).isEmpty();
+		assertThat(checkout.baseFile(view.run().id(), "missing/deep.txt").block()).isEmpty();
+	}
+
 	@Test
 	void buildSettingsAndInstructionsComeFromTheBaseCommitNotTheWorkTree() throws Exception {
 		CheckoutInfo first = checkout.checkout(view).block();

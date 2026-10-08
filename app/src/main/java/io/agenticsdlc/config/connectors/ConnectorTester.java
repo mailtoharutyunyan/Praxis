@@ -73,6 +73,13 @@ public final class ConnectorTester {
 	}
 
 	private Mono<Result> models(Connector c) {
+		if (ConnectorCatalog.ENGINE_CLAUDE_CODE.equals(c.text("engine")) && c.secret("apiKey").isBlank()
+				&& !List.of("ollama", "bedrock").contains(c.text("provider"))) {
+			// The token only works in the CLI, which runs in a run's sandbox: nothing to call from here.
+			return Mono.just(new Result(true, "Saved. Claude Code runs in each run's sandbox, so the token is first used "
+					+ "by the next run. Tasks from Jira, Slack and other outside sources need an API key here, or they "
+					+ "wait for a human."));
+		}
 		String provider = c.text("provider");
 		if (provider.equals("ollama")) {
 			String base = c.text("baseUrl").isEmpty() ? "http://localhost:11434" : c.text("baseUrl");

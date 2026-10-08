@@ -9,6 +9,7 @@ import io.agenticsdlc.core.workspace.Environments;
 import io.agenticsdlc.core.workspace.RepositoryCheckout;
 import io.agenticsdlc.core.workspace.Sandbox;
 import io.agenticsdlc.core.workspace.SandboxSpec;
+import io.agenticsdlc.core.workspace.WorkspacePath;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -186,6 +187,23 @@ public final class RunWorkspace implements Environments {
 
 	public Mono<String> diff(StageContext context) {
 		return checkout.diff(context.run().id());
+	}
+
+	/**
+	 * Puts files of the working copy back as they are in the base commit: changed ones are rewritten, added ones
+	 * deleted. The writes run in the sandbox as its user, like the agent's own, so links the agent made cannot
+	 * redirect them on the host. Text files only; anything else fails.
+	 */
+	public Mono<Void> restore(StageContext context, Collection<String> paths) {
+		UUID runId = context.run().id();
+		return Flux.fromIterable(paths)
+				.concatMap(path -> checkout.baseFile(runId, path).flatMap(base -> base.isPresent()
+						? sandbox.writeFile(runId, path, base.get())
+						: sandbox.exec(runId, "rm -f -- " + WorkspacePath.shellQuote(WorkspacePath.relative(path)),
+								commandTimeout).flatMap(result -> result.succeeded() ? Mono.<Void>empty()
+										: Mono.error(new IllegalStateException("could not delete " + path + ": "
+												+ result.tail(500))))))
+				.then();
 	}
 
 	/** No supported build files and no complete {@code .agentic-sdlc.yml}. */

@@ -2,6 +2,7 @@ package io.agenticsdlc.config;
 
 import io.agenticsdlc.core.agent.AgentLoop;
 import io.agenticsdlc.core.agent.AgentModels;
+import io.agenticsdlc.core.agent.ExternalAgent;
 import io.agenticsdlc.core.agent.tools.SandboxTools;
 import io.agenticsdlc.core.domain.RunState;
 import io.agenticsdlc.core.engine.RunLimits;
@@ -15,6 +16,7 @@ import io.agenticsdlc.core.stage.RunWorkspace;
 import io.agenticsdlc.core.workspace.RepositoryCheckout;
 import io.agenticsdlc.core.workspace.Sandbox;
 import java.time.Clock;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -29,7 +31,8 @@ class AgentStageConfiguration {
 
 	@Bean
 	AgentStages agentStages(AgentModels models, RunWorkspace workspace, Sandbox sandbox, RepositoryCheckout checkout,
-			RunLimits limits, AgenticProperties properties, RepoMemory memory, RunStore store, Clock clock) {
+			RunLimits limits, AgenticProperties properties, RepoMemory memory, RunStore store, Clock clock,
+			ObjectProvider<ExternalAgent> external) {
 		AgenticProperties.Agent agent = properties.agent();
 		AgentStages.Memory recall = !properties.memory().enabled() ? AgentStages.Memory.NONE
 				: new AgentStages.Memory(new MemoryRecall(memory, sandbox, clock, properties.memory().retention()),
@@ -37,7 +40,8 @@ class AgentStageConfiguration {
 		return new AgentStages(models, workspace,
 				new SandboxTools(sandbox, checkout, properties.sandbox().commandTimeout(), workspace), limits,
 				new AgentLoop.Limits(agent.maxTurns(), agent.maxOutputTokens(), agent.maxToolResultChars(),
-						agent.maxRepeats()), new AgentStages.Options(agent.testsFirst(), agent.specCritic()), recall);
+						agent.maxRepeats()), new AgentStages.Options(agent.testsFirst(), agent.specCritic()), recall,
+				external.getIfAvailable(() -> ExternalAgent.NONE));
 	}
 
 	@Bean
