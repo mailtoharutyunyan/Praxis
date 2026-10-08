@@ -29,6 +29,8 @@
 		<jacoco.version>0.8.15</jacoco.version>
 		<docker-java.version>3.7.1</docker-java.version>
 		<jgit.version>7.8.0.202609011348-r</jgit.version>
+		<cyclonedx-maven-plugin.version>2.9.3</cyclonedx-maven-plugin.version>
+		<bouncycastle.version>1.86</bouncycastle.version>
 		<!-- Line coverage each module must reach in `verify`; modules may raise or lower it. -->
 		<coverage.minimum>0.80</coverage.minimum>
 	</properties>
@@ -95,6 +97,23 @@
 				<artifactId>httpclient</artifactId>
 				<version>4.5.14</version>
 			</dependency>
+			<!-- Security pin: docker-java pulls Bouncy Castle 1.82, whose critical CVEs (CVE-2025-14813, CVE-2026-8763)
+			     are fixed in later releases and would fail the image scan in CI. -->
+			<dependency>
+				<groupId>org.bouncycastle</groupId>
+				<artifactId>bcprov-jdk18on</artifactId>
+				<version>${bouncycastle.version}</version>
+			</dependency>
+			<dependency>
+				<groupId>org.bouncycastle</groupId>
+				<artifactId>bcpkix-jdk18on</artifactId>
+				<version>${bouncycastle.version}</version>
+			</dependency>
+			<dependency>
+				<groupId>org.bouncycastle</groupId>
+				<artifactId>bcutil-jdk18on</artifactId>
+				<version>${bouncycastle.version}</version>
+			</dependency>
 			<dependency>
 				<groupId>com.tngtech.archunit</groupId>
 				<artifactId>archunit-junit5</artifactId>
@@ -104,6 +123,35 @@
 	</dependencyManagement>
 
 	<build>
+		<pluginManagement>
+			<plugins>
+				<!-- CycloneDX SBOM, written to target/bom.json by `package` in modules that declare the plugin (app). -->
+				<plugin>
+					<groupId>org.cyclonedx</groupId>
+					<artifactId>cyclonedx-maven-plugin</artifactId>
+					<version>${cyclonedx-maven-plugin.version}</version>
+					<executions>
+						<!-- Boot's parent binds makeAggregateBom into the jar; one SBOM file next to the jar replaces it. -->
+						<execution>
+							<id>default</id>
+							<phase>none</phase>
+						</execution>
+						<execution>
+							<id>sbom</id>
+							<phase>package</phase>
+							<goals>
+								<goal>makeBom</goal>
+							</goals>
+							<configuration>
+								<projectType>application</projectType>
+								<outputFormat>json</outputFormat>
+								<outputName>bom</outputName>
+							</configuration>
+						</execution>
+					</executions>
+				</plugin>
+			</plugins>
+		</pluginManagement>
 		<plugins>
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>

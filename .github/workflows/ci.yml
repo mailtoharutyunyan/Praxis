@@ -12,6 +12,7 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# Actions are pinned to full commit SHAs (version in the trailing comment); Dependabot keeps them current.
 jobs:
   ui:
     runs-on: ubuntu-latest
@@ -20,8 +21,8 @@ jobs:
       run:
         working-directory: ui
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '24'
           cache: npm
@@ -30,24 +31,44 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
+      # CycloneDX SBOM of the UI's runtime dependencies, taken from the lockfile `npm ci` installed.
+      - run: npx --yes @cyclonedx/cyclonedx-npm@6.0.1 --package-lock-only --omit dev --output-file bom.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sbom-ui
+          path: ui/bom.json
 
   verify:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-java@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
         with:
           distribution: temurin
           java-version: '25'
           cache: maven
       # Unit tests, Testcontainers integration tests (Docker is available on ubuntu runners),
-      # ArchUnit layering rules and the JaCoCo coverage gate.
+      # ArchUnit layering rules, the JaCoCo coverage gate and the CycloneDX SBOM (app/target/bom.json).
       - run: ./mvnw --batch-mode --no-transfer-progress verify
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sbom-app
+          path: app/target/bom.json
       - name: Production image builds
         run: docker build --tag agentic-sdlc:ci .
+      # Fails on critical vulnerabilities that have a fix available (OS packages and bundled libraries).
+      - name: Scan the image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: agentic-sdlc:ci
+          scanners: vuln
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
       - if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: test-reports
           path: |

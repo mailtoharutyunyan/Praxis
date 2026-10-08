@@ -177,6 +177,13 @@ Several instances can share one database:
 - Jira comments and pull request polling hold a cluster-wide lease, so only one instance runs each.
 - On shutdown, a worker stops claiming runs and gives in-flight steps `drain-timeout` (20 s) to finish. Steps still running after that release their lease, so another instance picks them up immediately.
 
+### Supply chain
+- **Pinned actions.** Every GitHub Action in `.github/workflows/` is pinned to a full commit SHA, with its version in a trailing comment.
+- **Dependabot.** `.github/dependabot.yml` proposes weekly updates for GitHub Actions, Maven, npm (`ui/`) and the Dockerfile's base images. A release must be 14 days old before it is proposed; security updates are not delayed.
+- **CodeQL.** `.github/workflows/codeql.yml` analyses the Java code and the UI on pushes to `main`, on pull requests and weekly.
+- **SBOM.** `./mvnw package` writes a CycloneDX SBOM of the application to `app/target/bom.json`. CI uploads it as the `sbom-app` artifact, and the UI's SBOM (runtime dependencies from `ui/package-lock.json`) as `sbom-ui`.
+- **Image scan.** CI builds the production image and scans it with [Trivy](https://trivy.dev). A critical vulnerability with a fix available fails the build.
+
 ### Repository memory
 Agents remember what they learn about a repository, much like Copilot Memory. The planner, coder and reviewer have a `remember` tool for durable facts such as "integration tests need `-Pit`" or "controllers live in `web/`".
 - **Citations.** Every fact must cite a line of code. The citation is checked when the fact is saved.
