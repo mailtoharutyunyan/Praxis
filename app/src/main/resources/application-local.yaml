@@ -9,6 +9,9 @@ spring:
 agentic:
   stub-stages:
     enabled: true
+  # Real model stages need an API key; without one the placeholders walk runs through the pipeline.
+  agent:
+    enabled: ${AGENTIC_AGENTS:false}
   security:
     cors-allowed-origins:
       - http://localhost:5173

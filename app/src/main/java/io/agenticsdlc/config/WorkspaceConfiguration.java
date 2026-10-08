@@ -6,7 +6,9 @@ import com.github.dockerjava.core.DockerClientConfig;
 import com.github.dockerjava.core.DockerClientImpl;
 import com.github.dockerjava.zerodep.ZerodepDockerHttpClient;
 import io.agenticsdlc.adapter.out.docker.DockerSandbox;
+import io.agenticsdlc.adapter.out.docker.SandboxJanitor;
 import io.agenticsdlc.adapter.out.git.JGitRepositoryCheckout;
+import io.agenticsdlc.core.port.RunStore;
 import io.agenticsdlc.core.stage.PrepareContextStage;
 import io.agenticsdlc.core.stage.RunWorkspace;
 import io.agenticsdlc.core.stage.VerifyStage;
@@ -71,5 +73,10 @@ class WorkspaceConfiguration {
 	@Bean
 	VerifyStage verifyStage(RunWorkspace workspace) {
 		return new VerifyStage(workspace);
+	}
+
+	@Bean
+	SandboxJanitor sandboxJanitor(DockerClient docker, RunStore store, Sandbox sandbox, RepositoryCheckout checkout) {
+		return new SandboxJanitor(docker, store, sandbox, checkout, Duration.ofMinutes(5));
 	}
 }

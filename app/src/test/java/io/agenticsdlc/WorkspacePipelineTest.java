@@ -38,7 +38,7 @@ import org.springframework.test.context.DynamicPropertySource;
 @Import(TestcontainersConfiguration.class)
 @SpringBootTest(properties = { "agentic.stub-stages.enabled=true", "agentic.sandbox.enabled=true",
 		"agentic.sandbox.network=none", "agentic.sandbox.memory=256MB", "agentic.worker.poll-interval=50ms",
-		"agentic.limits.max-fix-iterations=1" })
+		"agentic.limits.max-fix-iterations=1", "agentic.agent.enabled=false" })
 class WorkspacePipelineTest {
 
 	private static final Path ROOT;

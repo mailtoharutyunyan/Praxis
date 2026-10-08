@@ -1,5 +1,6 @@
 package io.agenticsdlc.core.stage;
 
+import io.agenticsdlc.core.domain.RunEventType;
 import io.agenticsdlc.core.domain.RunState;
 import io.agenticsdlc.core.domain.Usage;
 import io.agenticsdlc.core.engine.StageContext;
@@ -34,15 +35,19 @@ public final class VerifyStage implements StageHandler {
 	public Mono<StageOutcome> execute(StageContext context) {
 		return workspace.prepare(context)
 				.flatMap(prepared -> workspace.runAll(context, prepared.profile().verifyCommands()))
-				.map(results -> {
+				.flatMap(results -> {
 					CommandResult last = results.getLast();
 					if (last.succeeded()) {
-						return (StageOutcome) new StageOutcome.Completed(Usage.ZERO,
-								Map.of("commands", results.size(), "result", "PASSED"));
+						// The verified diff is what the IMPLEMENTATION gate shows the approver.
+						return workspace.diff(context)
+								.flatMap(diff -> context.emit(RunEventType.ARTIFACT_PRODUCED, "system",
+										Map.of("kind", RunHistory.DIFF, "content", diff)))
+								.thenReturn((StageOutcome) new StageOutcome.Completed(Usage.ZERO,
+										Map.of("commands", results.size(), "result", "PASSED")));
 					}
 					String why = last.timedOut() ? "timed out" : "exited with " + last.exitCode();
-					return new StageOutcome.NeedsRework("`" + last.command() + "` " + why + ":\n"
-							+ last.tail(FAILURE_TAIL_CHARS), Usage.ZERO);
+					return Mono.just((StageOutcome) new StageOutcome.NeedsRework("`" + last.command() + "` " + why
+							+ ":\n" + last.tail(FAILURE_TAIL_CHARS), Usage.ZERO));
 				})
 				.onErrorResume(RunWorkspace.UndetectableBuildException.class,
 						e -> Mono.just(new StageOutcome.Escalate(e.getMessage(), Usage.ZERO)));

@@ -2,7 +2,7 @@
 
 Turns a task (a prompt, a Jira ticket, or another source) into a reviewed pull request. An agent plans the work, implements it in an isolated Docker sandbox, runs the build and tests, and reviews its own changes. Humans approve at gates whose number scales with the task's risk. A human always approves the push, and merging is never automated.
 
-> Status: **M3 (model layer and agent loop)**. See [the roadmap](#roadmap).
+> Status: **M4 (agent stages: triage, spec, implement, verify, review)**. See [the roadmap](#roadmap).
 
 ## Stack
 - Java 25 (LTS), Spring Boot 4.1.1, Spring WebFlux, Project Reactor
@@ -124,6 +124,18 @@ Limits:
 
 `LiveAnthropicSmokeTest` exercises a real tool-call round trip when `ANTHROPIC_API_KEY` is set.
 
+## What each stage does
+| Stage | Who | Output |
+|---|---|---|
+| Triage | Triage model, request text only. Fails safe to HIGH when unsure. | Risk level and rationale. Untrusted sources always add SPEC. |
+| Context | Host plus sandbox: clone, detect toolchain, set up, baseline build | Toolchain, base commit, baseline result |
+| Spec | Planner with read-only tools | `spec` artifact: EARS requirements, design, tasks, test plan |
+| Implement | Coder with sandbox tools | Changes in the working copy. Any approver feedback, failed checks or review findings are fed back in. |
+| Verify | Deterministic build and test in the sandbox | Passes on to review (`diff` artifact), or sends the run back to implement |
+| Review | Fresh-context reviewer with read-only tools | `review` artifact. `VERDICT: APPROVE` moves on to the PUBLISH gate; otherwise back to implement. |
+
+Gates show the latest artifacts (`GET /api/v1/runs/{id}/events`, `ARTIFACT_PRODUCED`). Text from tickets and issues is passed to models as data, wrapped in `<task>`, with an explicit instruction to ignore embedded commands. A janitor removes the sandboxes and working copies of finished runs.
+
 ## API (v1)
 All endpoints need a bearer JWT from your OIDC provider (`spring.security.oauth2.resourceserver.jwt.issuer-uri`). Roles are read from the `roles` claim, configurable with `agentic.security.roles-claim` (Keycloak: `realm_access.roles`). Errors are RFC 9457 problem details.
 
@@ -148,7 +160,7 @@ Operations: `/actuator/health/{liveness,readiness}` and `/actuator/prometheus`, 
 | **M1** ✅ | Task intake API, run engine and leased worker, SSE event stream, approvals, OAuth2 roles |
 | **M2** ✅ | Docker sandbox, JGit clone, build/test detection |
 | **M3** ✅ | Spring AI model registry (per-role provider/model), tool loop with budgets |
-| M4 | Triage → context → spec → implement ⇄ verify → review, all gates |
+| **M4** ✅ | Triage → context → spec → implement ⇄ verify → review, all gates |
 | M5 | SCM providers: GitHub, GitLab, Bitbucket, Azure DevOps (branch push + PR) |
 | M6 | Jira intake (webhook + REST) and status comments |
 | M7 | Evaluation harness built from historical tickets |

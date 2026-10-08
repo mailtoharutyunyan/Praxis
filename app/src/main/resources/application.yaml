@@ -65,6 +65,7 @@ agentic:
     allowed-hosts: [github.com, gitlab.com, bitbucket.org, dev.azure.com]
     clone-depth: 1
   agent:
+    enabled: true
     max-turns: 60
     max-tool-result-chars: 12000
   models:

@@ -135,11 +135,13 @@ public record AgenticProperties(@Valid @NotNull Worker worker, @Valid @NotNull L
 	/**
 	 * Agent loop limits (ADR-0003).
 	 *
+	 * @param enabled register the model-driven stages (triage, spec, implement, review); requires the sandbox
 	 * @param maxTurns model calls per stage
 	 * @param maxToolResultChars tool output shown to the model; the tail is kept
 	 * @param maxRepeats identical consecutive tool calls before the loop counts as stuck
 	 */
-	public record Agent(@DefaultValue("60") @Min(1) int maxTurns, @DefaultValue("12000") @Min(500) int maxToolResultChars,
-			@DefaultValue("3") @Min(2) int maxRepeats) {
+	public record Agent(@DefaultValue("true") boolean enabled, @DefaultValue("60") @Min(1) int maxTurns,
+			@DefaultValue("12000") @Min(500) int maxToolResultChars, @DefaultValue("3") @Min(2) int maxRepeats,
+			@DefaultValue("16000") @Min(256) int maxOutputTokens) {
 	}
 }

@@ -109,7 +109,10 @@ class WorkspaceStagesTest {
 	@Test
 	void eventsCarryCommandResults() {
 		new VerifyStage(workspace).execute(context).block();
-		RunEvent last = store.allEvents(context.run().id()).getLast();
+		List<RunEvent> log = store.allEvents(context.run().id());
+		assertThat(log.getLast().type()).isEqualTo(RunEventType.ARTIFACT_PRODUCED);
+		assertThat(log.getLast().payload()).containsEntry("kind", RunHistory.DIFF);
+		RunEvent last = log.get(log.size() - 2);
 		assertThat(last.actor()).isEqualTo(RunWorkspace.ACTOR);
 		assertThat(last.payload()).containsEntry("command", "./mvnw -B -ntp verify").containsEntry("exitCode", 0);
 	}

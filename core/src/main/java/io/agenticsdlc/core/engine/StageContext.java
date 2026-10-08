@@ -43,6 +43,11 @@ public final class StageContext {
 		return clock;
 	}
 
+	/** The run's event log so far, oldest first (feedback, artifacts and failures from earlier stages). */
+	public Mono<List<RunEvent>> history() {
+		return store.events(run().id(), 0, Integer.MAX_VALUE).collectList();
+	}
+
 	/** Publish a progress event (tool call, command output, agent message) to the run's log and live stream. */
 	public Mono<Void> emit(RunEventType type, String actor, Map<String, Object> payload) {
 		return store.append(run().id(), leaseOwner, List.of(RunEvent.of(run().id(), type, actor, payload, clock.instant())));
