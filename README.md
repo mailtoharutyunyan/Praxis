@@ -2,7 +2,7 @@
 
 Turns a task (a prompt, a Jira ticket, or another source) into a reviewed pull request. An agent plans the work, implements it in an isolated Docker sandbox, runs the build and tests, and reviews its own changes. Humans approve at gates whose number scales with the task's risk. A human always approves the push, and merging is never automated.
 
-> Status: **M6 (Jira intake and status comments)**. See [the roadmap](#roadmap).
+> Status: **M7 (evaluation harness)**. See [the roadmap](#roadmap).
 
 ## Stack
 - Java 25 (LTS), Spring Boot 4.1.1, Spring WebFlux, Project Reactor
@@ -180,6 +180,9 @@ agentic:
       SHOP: { kind: GITHUB, clone-url: https://github.com/acme/shop.git, base-branch: main }
 ```
 
+## Evaluation
+`evals/` explains how to turn merged fixes into a suite. Each case is replayed through the production pipeline with gates auto-approved and nothing pushed, then graded in its sandbox with hidden fail-to-pass and pass-to-pass checks. The report gives pass@1, pass^k, cost and duration, and `--agentic.eval.min-pass-rate` makes it a CI gate for prompt and model changes.
+
 ## API (v1)
 All endpoints need a bearer JWT from your OIDC provider (`spring.security.oauth2.resourceserver.jwt.issuer-uri`). Roles are read from the `roles` claim, configurable with `agentic.security.roles-claim` (Keycloak: `realm_access.roles`). Errors are RFC 9457 problem details.
 
@@ -207,5 +210,5 @@ Operations: `/actuator/health/{liveness,readiness}` and `/actuator/prometheus`, 
 | **M4** ✅ | Triage → context → spec → implement ⇄ verify → review, all gates |
 | **M5** ✅ | SCM providers: GitHub, GitLab, Bitbucket, Azure DevOps (branch push + PR) |
 | **M6** ✅ | Jira intake (webhook + REST) and status comments |
-| M7 | Evaluation harness built from historical tickets |
+| **M7** ✅ | Evaluation harness built from historical tickets |
 | M8 | Web UI |

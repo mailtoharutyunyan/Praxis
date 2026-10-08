@@ -1,0 +1,16 @@
+# Template: copy, point at your repositories, and fill in real cases (see evals/README.md).
+name: example
+trials: 3          # k for pass^k
+concurrency: 2
+cases:
+  - id: SHOP-123
+    title: Search ignores accents
+    description: |
+      Searching for "creme" should also find "crème". Currently only exact matches are returned.
+    repository: { kind: GITHUB, clone-url: https://github.com/acme/shop.git }
+    ref: eval/SHOP-123-base
+    hidden-files-dir: SHOP-123/tests
+    fail-to-pass:
+      - ./mvnw -B -ntp -q test -Dtest=SearchAccentTest
+    pass-to-pass:
+      - ./mvnw -B -ntp -q test
