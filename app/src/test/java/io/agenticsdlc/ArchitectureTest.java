@@ -30,26 +30,20 @@ class ArchitectureTest {
 	static final ArchRule coreIsFreeOfCycles = slices().matching("io.agenticsdlc.core.(*)..")
 			.should().beFreeOfCycles();
 
-	// The rules below guard adapter packages that arrive in M1+. allowEmptyShould is removed once they exist,
-	// so a misspelled package name cannot silently disable a rule.
-
 	@ArchTest
 	static final ArchRule inboundAdaptersDoNotReachOutboundAdapters = noClasses()
 			.that().resideInAPackage("io.agenticsdlc.adapter.in..")
-			.should().dependOnClassesThat().resideInAPackage("io.agenticsdlc.adapter.out..")
-			.allowEmptyShould(true);
+			.should().dependOnClassesThat().resideInAPackage("io.agenticsdlc.adapter.out..");
 
 	@ArchTest
 	static final ArchRule outboundAdaptersAreIndependent = slices()
 			.matching("io.agenticsdlc.adapter.out.(*)..")
-			.should().notDependOnEachOther()
-			.allowEmptyShould(true);
+			.should().notDependOnEachOther();
 
 	@ArchTest
 	static final ArchRule outboundAdaptersDoNotReachInbound = noClasses()
 			.that().resideInAPackage("io.agenticsdlc.adapter.out..")
-			.should().dependOnClassesThat().resideInAPackage("io.agenticsdlc.adapter.in..")
-			.allowEmptyShould(true);
+			.should().dependOnClassesThat().resideInAPackage("io.agenticsdlc.adapter.in..");
 
 	@ArchTest
 	static final ArchRule productionCodeLivesInKnownLayers = classes()

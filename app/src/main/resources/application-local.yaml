@@ -1,0 +1,18 @@
+# Local development: placeholder stages, developer JWT key (run scripts/dev-token.sh once to create it).
+spring:
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          public-key-location: file:../.dev/jwt-public.pem
+
+agentic:
+  stub-stages:
+    enabled: true
+  security:
+    cors-allowed-origins:
+      - http://localhost:5173
+
+logging:
+  level:
+    io.agenticsdlc: DEBUG

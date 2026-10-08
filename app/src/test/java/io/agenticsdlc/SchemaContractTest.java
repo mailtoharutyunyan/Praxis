@@ -27,7 +27,7 @@ import org.springframework.r2dbc.core.DatabaseClient;
  * database itself rejects states the domain forbids.
  */
 @Import(TestcontainersConfiguration.class)
-@SpringBootTest
+@SpringBootTest(properties = "agentic.worker.enabled=false")
 class SchemaContractTest {
 
 	private static final Pattern QUOTED = Pattern.compile("'([A-Z_]+)'");

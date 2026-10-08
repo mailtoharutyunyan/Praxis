@@ -9,7 +9,7 @@ import org.springframework.context.annotation.Import;
 import org.springframework.r2dbc.core.DatabaseClient;
 
 @Import(TestcontainersConfiguration.class)
-@SpringBootTest
+@SpringBootTest(properties = "agentic.worker.enabled=false")
 class AgenticSdlcApplicationTests {
 
 	@Autowired

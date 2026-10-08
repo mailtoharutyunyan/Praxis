@@ -30,3 +30,9 @@ build/
 
 ### VS Code ###
 .vscode/
+
+### Local agent progress markers ###
+.agentic-progress/
+
+### Local developer keys ###
+.dev/

@@ -27,3 +27,30 @@ management:
   observations:
     key-values:
       application: agentic-sdlc
+
+# Configure an OIDC provider in each environment, e.g.
+#   SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_ISSUER_URI=https://idp.example.com/realms/agentic
+# The local profile uses a developer key pair instead (scripts/dev-token.sh).
+
+agentic:
+  worker:
+    enabled: true
+    concurrency: 4
+    poll-interval: 1s
+    lease: 60s
+  limits:
+    max-fix-iterations: 3
+    max-review-loops: 2
+    max-tokens: 2000000
+    max-cost-usd: 10.00
+    stage-timeout: 30m
+  gates:
+    forbid-self-approval: false
+  security:
+    roles-claim: roles
+    cors-allowed-origins: []
+  events:
+    fallback-poll: 5s
+    keep-alive: 15s
+  stub-stages:
+    enabled: false
