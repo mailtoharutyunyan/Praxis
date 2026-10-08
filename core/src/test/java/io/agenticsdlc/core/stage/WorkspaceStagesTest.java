@@ -37,7 +37,7 @@ class WorkspaceStagesTest {
 	private final RepositoryCheckout checkout = new RepositoryCheckout() {
 		@Override
 		public Mono<CheckoutInfo> checkout(RunView view) {
-			return Mono.just(new CheckoutInfo("main", "abc123", "agent/" + view.run().id(), rootFiles,
+			return Mono.just(new CheckoutInfo("main", "abc123", "agent/" + view.run().id(), rootFiles, rootFiles,
 					new ProjectConfig(null, "./mvnw -q dependency:go-offline", null, null), "# Agents"));
 		}
 

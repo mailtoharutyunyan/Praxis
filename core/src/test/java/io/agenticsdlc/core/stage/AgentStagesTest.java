@@ -40,7 +40,8 @@ class AgentStagesTest {
 	private final RepositoryCheckout checkout = new RepositoryCheckout() {
 		@Override
 		public Mono<CheckoutInfo> checkout(RunView view) {
-			return Mono.just(new CheckoutInfo("main", "abc", "agent/x", java.util.Set.of("pom.xml", "mvnw"), null,
+			return Mono.just(new CheckoutInfo("main", "abc", "agent/x", java.util.Set.of("pom.xml", "mvnw"),
+					java.util.Set.of("pom.xml", "mvnw"), null,
 					"Use records for DTOs."));
 		}
 

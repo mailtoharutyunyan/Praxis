@@ -299,7 +299,7 @@ public final class AgentStages {
 							return testsArtifact(context, Map.of(), false, "no tests were written")
 									.thenReturn(new TestsFirst(usage, List.of(), false));
 						}
-						return workspace.runAll(context, prepared.profile().verifyCommands()).flatMap(results -> {
+						return workspace.verify(context, prepared, files).flatMap(results -> {
 							var last = results.getLast();
 							if (last.succeeded() && attempt == 1) {
 								return writeTests(context, prepared, brief + "\n\nYour tests already pass on the "
@@ -399,10 +399,27 @@ public final class AgentStages {
 	}
 
 	private static void appendRepository(StringBuilder brief, RunWorkspace.Prepared prepared) {
-		brief.append("\n\nRepository: base branch ").append(prepared.checkout().baseBranch())
-				.append(". Toolchain: ").append(prepared.profile().tool())
-				.append(". Build: `").append(prepared.profile().build())
-				.append("`. Tests: `").append(prepared.profile().test()).append("`.");
+		var plan = prepared.plan();
+		brief.append("\n\nRepository: base branch ").append(prepared.checkout().baseBranch()).append('.');
+		if (plan.components().size() == 1 && plan.main().path().equals(".")) {
+			var profile = plan.main().profile();
+			brief.append(" Toolchain: ").append(profile.tool()).append(". Build: `").append(profile.build())
+					.append("`. Tests: `").append(profile.test()).append("`.");
+		}
+		else {
+			brief.append(" It holds several services; run_command takes service=<name> to run in that service's "
+					+ "toolchain from its directory, and only the services you change are verified:");
+			for (var component : plan.components()) {
+				brief.append("\n- ").append(component.name()).append(" in ").append(component.path()).append(" (")
+						.append(component.profile().tool()).append("; build `").append(component.profile().build())
+						.append("`, tests `").append(component.profile().test()).append("`)");
+			}
+		}
+		if (!plan.sidecars().isEmpty()) {
+			brief.append("\nRunning beside the tests, reachable by host name: ")
+					.append(String.join(", ", plan.sidecars().stream().map(s -> s.name() + " (" + s.image() + ")").toList()))
+					.append(". Build environment: ").append(plan.env().keySet()).append('.');
+		}
 		if (prepared.checkout().agentInstructions() != null) {
 			brief.append("\n\nRepository guidance (AGENTS.md / CLAUDE.md):\n")
 					.append(Prompts.block("guidance", prepared.checkout().agentInstructions()));

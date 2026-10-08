@@ -15,10 +15,12 @@ import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Stream;
@@ -66,6 +68,8 @@ public class JGitRepositoryCheckout implements RepositoryCheckout, ChangePublish
 	private static final String SECTION = "agentic";
 	private static final int MAX_INSTRUCTIONS_BYTES = 32_000;
 	private static final int MAX_CONFIG_BYTES = 16_384;
+	private static final int FILE_DEPTH = 4;
+	private static final int MAX_FILES = 50_000;
 
 	private final WorkspacePaths paths;
 	private final Map<String, String> tokensByHost;
@@ -191,7 +195,8 @@ public class JGitRepositoryCheckout implements RepositoryCheckout, ChangePublish
 			RevTree tree = walk.parseCommit(ObjectId.fromString(baseCommit)).getTree();
 			String config = readBlob(repository, tree, ".agentic-sdlc.yml", MAX_CONFIG_BYTES, false);
 			return new CheckoutInfo(baseBranch, baseCommit, workBranch, rootEntries(repository, tree),
-					config == null ? null : projectConfig(config), agentInstructions(repository, tree));
+					files(repository, tree), config == null ? null : projectConfig(config),
+					agentInstructions(repository, tree));
 		}
 	}
 
@@ -311,6 +316,26 @@ public class JGitRepositoryCheckout implements RepositoryCheckout, ChangePublish
 		return Set.copyOf(names);
 	}
 
+	/** Paths of the files up to {@value #FILE_DEPTH} directories deep (at most {@value #MAX_FILES}), for service detection. */
+	static Set<String> files(Repository repository, RevTree tree) throws IOException {
+		Set<String> files = new HashSet<>();
+		try (TreeWalk walk = new TreeWalk(repository)) {
+			walk.addTree(tree);
+			walk.setRecursive(false);
+			while (walk.next() && files.size() < MAX_FILES) {
+				if (walk.isSubtree()) {
+					if (walk.getDepth() < FILE_DEPTH) {
+						walk.enterSubtree();
+					}
+				}
+				else {
+					files.add(walk.getPathString());
+				}
+			}
+		}
+		return Set.copyOf(files);
+	}
+
 	/**
 	 * A regular file at the root of {@code tree}, decoded as UTF-8 (malformed bytes replaced); null if absent, not a
 	 * regular file (symlinks are ignored), or larger than {@code maxBytes} unless {@code truncate}.
@@ -344,13 +369,49 @@ public class JGitRepositoryCheckout implements RepositoryCheckout, ChangePublish
 			if (!(parsed instanceof Map<?, ?> map)) {
 				return null;
 			}
+			List<ProjectConfig.ServiceConfig> services = maps(map.get("services")).stream()
+					.map(s -> new ProjectConfig.ServiceConfig(string(s, "name"), Objects.requireNonNull(string(s, "path"),
+							"every service needs a path"), string(s, "image"), string(s, "setup"), string(s, "build"),
+							string(s, "test")))
+					.toList();
+			List<ProjectConfig.SidecarConfig> sidecars = maps(map.get("sidecars")).stream()
+					.map(s -> new ProjectConfig.SidecarConfig(Objects.requireNonNull(string(s, "name"), "every sidecar needs a name"),
+							Objects.requireNonNull(string(s, "image"), "every sidecar needs an image"), strings(s.get("env")),
+							string(s, "ready")))
+					.toList();
 			return new ProjectConfig(string(map, "image"), string(map, "setup"), string(map, "build"),
-					string(map, "test"));
+					string(map, "test"), services, sidecars, strings(map.get("env")));
 		}
 		catch (RuntimeException e) {
 			log.warn("ignoring unreadable .agentic-sdlc.yml: {}", e.getMessage());
 			return null;
 		}
+	}
+
+	private static List<Map<?, ?>> maps(Object value) {
+		if (value == null) {
+			return List.of();
+		}
+		if (!(value instanceof List<?> list)) {
+			throw new IllegalArgumentException("expected a list, got " + value);
+		}
+		List<Map<?, ?>> maps = new ArrayList<>();
+		for (Object item : list) {
+			if (!(item instanceof Map<?, ?> map)) {
+				throw new IllegalArgumentException("expected a mapping, got " + item);
+			}
+			maps.add(map);
+		}
+		return maps;
+	}
+
+	private static Map<String, String> strings(Object value) {
+		if (!(value instanceof Map<?, ?> map)) {
+			return Map.of();
+		}
+		Map<String, String> strings = new java.util.LinkedHashMap<>();
+		map.forEach((k, v) -> strings.put(String.valueOf(k), v == null ? "" : String.valueOf(v)));
+		return strings;
 	}
 
 	private static String string(Map<?, ?> map, String key) {

@@ -12,6 +12,7 @@ import com.github.dockerjava.api.model.Volume;
 import io.agenticsdlc.config.AgenticProperties;
 import io.agenticsdlc.config.WorkspacePaths;
 import io.agenticsdlc.core.workspace.CommandResult;
+import io.agenticsdlc.core.workspace.ProjectConfig;
 import io.agenticsdlc.core.workspace.Sandbox;
 import io.agenticsdlc.core.workspace.SandboxSpec;
 import java.io.IOException;
@@ -43,6 +44,8 @@ public class DockerSandbox implements Sandbox {
 
 	private static final Logger log = LoggerFactory.getLogger(DockerSandbox.class);
 	static final String LABEL_RUN = "io.agenticsdlc.run";
+	static final String LABEL_ENVIRONMENT = "io.agenticsdlc.environment";
+	static final String LABEL_SIDECAR = "io.agenticsdlc.sidecar";
 	/** Keeps the container alive and exits promptly on SIGTERM; works in any image with a POSIX shell. */
 	private static final String[] IDLE = { "sh", "-c", "trap 'exit 0' TERM; while :; do sleep 3600 & wait $!; done" };
 	private static final String RUN_WITH_TIMEOUT = "if command -v timeout >/dev/null 2>&1; "
@@ -81,6 +84,20 @@ public class DockerSandbox implements Sandbox {
 		return "agentic-run-" + runId;
 	}
 
+	/** The main environment keeps the plain name; services' environments add theirs (ADR-0006). */
+	static String containerName(UUID runId, String environment) {
+		return environment.equals(SandboxSpec.MAIN) ? containerName(runId) : containerName(runId) + "-" + environment;
+	}
+
+	/** Per-run internal network for sidecars: no route out, shared only by the run's own containers. */
+	static String networkName(UUID runId) {
+		return containerName(runId);
+	}
+
+	static String sidecarName(UUID runId, String sidecar) {
+		return containerName(runId) + "-sidecar-" + sidecar;
+	}
+
 	@Override
 	public Mono<Void> start(UUID runId, SandboxSpec spec) {
 		return Mono.<Void>fromRunnable(() -> startBlocking(runId, spec)).subscribeOn(Schedulers.boundedElastic());
@@ -88,7 +105,112 @@ public class DockerSandbox implements Sandbox {
 
 	@Override
 	public Mono<CommandResult> exec(UUID runId, String command, Duration timeout) {
-		return Mono.fromCallable(() -> execBlocking(runId, command, timeout)).subscribeOn(Schedulers.boundedElastic());
+		return exec(runId, SandboxSpec.MAIN, command, timeout);
+	}
+
+	@Override
+	public Mono<CommandResult> exec(UUID runId, String environment, String command, Duration timeout) {
+		return Mono.fromCallable(() -> execBlocking(containerName(runId, environment), command, timeout, Sandbox.WORKDIR))
+				.subscribeOn(Schedulers.boundedElastic());
+	}
+
+	/**
+	 * Sidecars (databases, brokers) on the run's internal network, reachable from its environments by name. They do
+	 * not mount the workspace and get no credentials; they keep their image's default capabilities, which database
+	 * entrypoints need, with {@code no-new-privileges} and the sandbox's resource limits.
+	 */
+	@Override
+	public Mono<Void> startSidecars(UUID runId, List<ProjectConfig.SidecarConfig> sidecars) {
+		if (sidecars.isEmpty()) {
+			return Mono.empty();
+		}
+		return Mono.<Void>fromCallable(() -> {
+			ensureNetwork(runId);
+			for (ProjectConfig.SidecarConfig sidecar : sidecars) {
+				startSidecar(runId, sidecar);
+			}
+			for (ProjectConfig.SidecarConfig sidecar : sidecars) {
+				awaitReady(runId, sidecar);
+			}
+			return null;
+		}).subscribeOn(Schedulers.boundedElastic());
+	}
+
+	private void ensureNetwork(UUID runId) {
+		String network = networkName(runId);
+		try {
+			docker.inspectNetworkCmd().withNetworkId(network).exec();
+		}
+		catch (NotFoundException e) {
+			docker.createNetworkCmd().withName(network).withInternal(true)
+					.withLabels(Map.of(LABEL_RUN, runId.toString())).exec();
+			log.info("created internal network {}", network);
+		}
+	}
+
+	private boolean hasNetwork(UUID runId) {
+		try {
+			docker.inspectNetworkCmd().withNetworkId(networkName(runId)).exec();
+			return true;
+		}
+		catch (NotFoundException e) {
+			return false;
+		}
+	}
+
+	private void startSidecar(UUID runId, ProjectConfig.SidecarConfig sidecar) {
+		if (!sidecar.name().matches("[a-z0-9][a-z0-9-]{0,29}")) {
+			throw new IllegalArgumentException("sidecar name must be lower case letters, digits and dashes: " + sidecar.name());
+		}
+		String name = sidecarName(runId, sidecar.name());
+		InspectContainerResponse existing = inspect(name);
+		if (existing != null && !sidecar.image().equals(existing.getConfig().getImage())) {
+			docker.removeContainerCmd(name).withForce(true).exec();
+			existing = null;
+		}
+		if (existing == null) {
+			pullIfMissing(sidecar.image());
+			List<String> env = new ArrayList<>();
+			sidecar.env().forEach((k, v) -> env.add(k + "=" + v));
+			HostConfig host = HostConfig.newHostConfig()
+					.withSecurityOpts(List.of("no-new-privileges"))
+					.withMemory(settings.memory().toBytes())
+					.withMemorySwap(settings.memory().toBytes())
+					.withNanoCPUs((long) (settings.cpus() * 1_000_000_000L))
+					.withPidsLimit(settings.pidsLimit())
+					.withNetworkMode(networkName(runId))
+					.withInit(true);
+			docker.createContainerCmd(sidecar.image())
+					.withName(name)
+					.withLabels(Map.of(LABEL_RUN, runId.toString(), LABEL_SIDECAR, sidecar.name()))
+					.withEnv(env)
+					.withAliases(sidecar.name())
+					.withHostConfig(host)
+					.exec();
+			log.info("created sidecar {} from {}", name, sidecar.image());
+		}
+		InspectContainerResponse current = inspect(name);
+		if (current != null && !Boolean.TRUE.equals(current.getState().getRunning())) {
+			docker.startContainerCmd(name).exec();
+		}
+	}
+
+	/** Runs the sidecar's readiness command until it succeeds; fails the stage after {@code imagePullTimeout}. */
+	private void awaitReady(UUID runId, ProjectConfig.SidecarConfig sidecar) throws InterruptedException {
+		if (sidecar.ready() == null || sidecar.ready().isBlank()) {
+			return;
+		}
+		long deadline = System.nanoTime() + Duration.ofMinutes(2).toNanos();
+		CommandResult last = null;
+		while (System.nanoTime() < deadline) {
+			last = execBlocking(sidecarName(runId, sidecar.name()), sidecar.ready(), Duration.ofSeconds(10), null);
+			if (last.succeeded()) {
+				return;
+			}
+			Thread.sleep(1_000);
+		}
+		throw new IllegalStateException("sidecar " + sidecar.name() + " did not become ready: `" + sidecar.ready()
+				+ "` last said " + (last == null ? "nothing" : last.tail(500)));
 	}
 
 	@Override
@@ -135,21 +257,36 @@ public class DockerSandbox implements Sandbox {
 		}).subscribeOn(Schedulers.boundedElastic());
 	}
 
+	/** Removes every container of the run (environments and sidecars) and its network. */
 	@Override
 	public Mono<Void> destroy(UUID runId) {
 		return Mono.<Void>fromRunnable(() -> {
+			List<String> containers = docker.listContainersCmd().withShowAll(true)
+					.withLabelFilter(Map.of(LABEL_RUN, runId.toString())).exec().stream()
+					.map(com.github.dockerjava.api.model.Container::getId).toList();
+			for (String container : containers) {
+				try {
+					docker.removeContainerCmd(container).withForce(true).withRemoveVolumes(true).exec();
+				}
+				catch (NotFoundException e) {
+					// already gone
+				}
+			}
 			try {
-				docker.removeContainerCmd(containerName(runId)).withForce(true).withRemoveVolumes(true).exec();
-				log.info("removed sandbox for run {}", runId);
+				docker.removeNetworkCmd(networkName(runId)).exec();
 			}
 			catch (NotFoundException e) {
-				// already gone
+				// no sidecars
+			}
+			if (!containers.isEmpty()) {
+				log.info("removed sandbox for run {} ({} containers)", runId, containers.size());
 			}
 		}).subscribeOn(Schedulers.boundedElastic());
 	}
 
 	private void startBlocking(UUID runId, SandboxSpec spec) {
-		String name = containerName(runId);
+		String name = containerName(runId, spec.name());
+		boolean sidecars = hasNetwork(runId);
 		InspectContainerResponse existing = inspect(name);
 		if (existing != null && !spec.image().equals(existing.getConfig().getImage())) {
 			log.info("sandbox image for run {} changed to {}, recreating", runId, spec.image());
@@ -174,11 +311,12 @@ public class DockerSandbox implements Sandbox {
 					.withMemorySwap(settings.memory().toBytes())
 					.withNanoCPUs((long) (settings.cpus() * 1_000_000_000L))
 					.withPidsLimit(settings.pidsLimit())
-					.withNetworkMode(settings.network())
+					// With sidecars and no network configured, the run's internal network is the only one.
+					.withNetworkMode(sidecars && settings.network().equals("none") ? networkName(runId) : settings.network())
 					.withInit(true);
 			docker.createContainerCmd(spec.image())
 					.withName(name)
-					.withLabels(Map.of(LABEL_RUN, runId.toString()))
+					.withLabels(Map.of(LABEL_RUN, runId.toString(), LABEL_ENVIRONMENT, spec.name()))
 					.withEntrypoint(IDLE)
 					.withCmd(List.of())
 					.withWorkingDir(Sandbox.WORKDIR)
@@ -189,11 +327,15 @@ public class DockerSandbox implements Sandbox {
 			log.info("created sandbox {} from {}", name, spec.image());
 		}
 		InspectContainerResponse current = inspect(name);
+		if (sidecars && current != null && !settings.network().equals("none")
+				&& !current.getNetworkSettings().getNetworks().containsKey(networkName(runId))) {
+			docker.connectToNetworkCmd().withNetworkId(networkName(runId)).withContainerId(name).exec();
+		}
 		if (current != null && !Boolean.TRUE.equals(current.getState().getRunning())) {
 			docker.startContainerCmd(name).exec();
 		}
 		if (proxy != null) {
-			writeMavenSettings(runId);
+			writeMavenSettings(name);
 		}
 	}
 
@@ -223,11 +365,11 @@ public class DockerSandbox implements Sandbox {
 		return value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
 	}
 
-	private void writeMavenSettings(UUID runId) {
+	private void writeMavenSettings(String container) {
 		try {
 			String data = java.util.Base64.getEncoder().encodeToString(
 					mavenSettings(proxy, settings.noProxy()).getBytes(StandardCharsets.UTF_8));
-			Raw raw = execRaw(runId, "mkdir -p /tmp/.agentic && printf '%s' \"$AGENTIC_DATA\" | base64 -d > " + MAVEN_SETTINGS,
+			Raw raw = execRaw(container, "mkdir -p /tmp/.agentic && printf '%s' \"$AGENTIC_DATA\" | base64 -d > " + MAVEN_SETTINGS,
 					List.of("AGENTIC_DATA=" + data), 0);
 			if (raw.exitCode() != 0) {
 				throw new IllegalStateException("writing Maven proxy settings failed: " + raw.stderr());
@@ -239,12 +381,14 @@ public class DockerSandbox implements Sandbox {
 		}
 	}
 
-	private CommandResult execBlocking(UUID runId, String command, Duration timeout) throws InterruptedException {
+	/** @param workingDir null for the image's own (sidecars have no workspace) */
+	private CommandResult execBlocking(String container, String command, Duration timeout, String workingDir)
+			throws InterruptedException {
 		long timeoutSeconds = Math.max(1, timeout.toSeconds());
-		String execId = docker.execCreateCmd(containerName(runId))
+		String execId = docker.execCreateCmd(container)
 				.withCmd("sh", "-c", RUN_WITH_TIMEOUT)
 				.withEnv(List.of("AGENTIC_CMD=" + command, "AGENTIC_TIMEOUT=" + timeoutSeconds))
-				.withWorkingDir(Sandbox.WORKDIR)
+				.withWorkingDir(workingDir)
 				.withAttachStdout(true)
 				.withAttachStderr(true)
 				.exec()
@@ -285,9 +429,13 @@ public class DockerSandbox implements Sandbox {
 	}
 
 	/** Exec with separate stdout (bytes, capped) and stderr. Used for file transfer. */
-	private Raw execRaw(UUID runId, String script, List<String> env, int maxStdout)
+	private Raw execRaw(UUID runId, String script, List<String> env, int maxStdout) throws InterruptedException {
+		return execRaw(containerName(runId), script, env, maxStdout);
+	}
+
+	private Raw execRaw(String container, String script, List<String> env, int maxStdout)
 			throws InterruptedException {
-		String execId = docker.execCreateCmd(containerName(runId))
+		String execId = docker.execCreateCmd(container)
 				.withCmd("sh", "-c", script)
 				.withEnv(env)
 				.withWorkingDir(Sandbox.WORKDIR)

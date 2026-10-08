@@ -93,6 +93,24 @@ setup: ./mvnw -B -ntp dependency:go-offline   # optional
 build: ./mvnw -B -ntp -DskipTests test-compile
 test:  ./mvnw -B -ntp verify
 ```
+### Microservices: monorepos, mixed toolchains, sidecars
+See ADR-0006.
+- **Services.** If the repository has no root build, every top-most directory (up to 3 levels deep) with a recognised build file is a service, and each gets a sandbox container from its own toolchain image. Node, Java, Go, Python and .NET can share a repository.
+- **Scoped verification.** Only the services a change touches are built and tested. A change outside every service (shared files) verifies all of them. The baseline at context preparation builds every service.
+- **Agent commands.** `run_command` takes `service: <name>` to run in that service's toolchain from its directory.
+- **Explicit list.** `.agentic-sdlc.yml` can name the services instead of relying on detection. It can also declare **sidecars**, the containers the tests need, on a private per-run network with no internet; their names are the hostnames:
+```yaml
+services:
+  - { name: orders, path: services/orders }                         # toolchain detected from its files
+  - { name: web, path: apps/web, image: node:24-bookworm, test: npm test -- --ci }
+sidecars:
+  - { name: postgres, image: postgres:16-alpine, env: { POSTGRES_PASSWORD: test }, ready: pg_isready -U postgres }
+  - { name: kafka, image: apache/kafka:4.1.0 }
+env:                                                                 # for every service's build
+  SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/postgres
+```
+Sidecars don't see the code and get no credentials. Testcontainers can't run inside the sandbox, because that would need the Docker socket; declare the same containers as sidecars and point the tests at them through `env`.
+
 SCM settings (`agentic.scm.*`):
 - `allowed-hosts`: the hosts tasks may point at (SSRF guard).
 - `tokens."[host]"`: per-host access tokens from the environment.

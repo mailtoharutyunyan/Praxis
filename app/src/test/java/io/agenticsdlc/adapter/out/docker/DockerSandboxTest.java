@@ -16,6 +16,7 @@ import io.agenticsdlc.support.TestRepos;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.AfterAll;
@@ -103,6 +104,35 @@ class DockerSandboxTest {
 		assertThat(noisy.truncated()).isTrue();
 		assertThat(noisy.output()).startsWith("line-0").contains("characters omitted").endsWith("THE-END\n");
 		assertThat(noisy.output().length()).isLessThan(2_200);
+	}
+
+	@Test
+	void servicesGetTheirOwnEnvironmentsAndReachSidecarsOnAPrivateNetwork() {
+		UUID run = UUID.randomUUID();
+		java.nio.file.Path repo = paths.repo(run);
+		try {
+			Files.createDirectories(repo);
+			Files.writeString(repo.resolve("hello.txt"), "hello\n");
+			sandbox.startSidecars(run, List.of(new io.agenticsdlc.core.workspace.ProjectConfig.SidecarConfig("postgres",
+					"postgres:16-alpine", Map.of("POSTGRES_PASSWORD", "test"), "pg_isready -U postgres"))).block();
+			sandbox.start(run, new SandboxSpec(TestRepos.ALPINE, Map.of("DB_HOST", "postgres"))).block();
+			sandbox.start(run, new SandboxSpec("web", TestRepos.ALPINE, Map.of())).block();
+
+			CommandResult reach = sandbox.exec(run, "nc -z -w 5 \"$DB_HOST\" 5432 && echo reachable", Duration.ofSeconds(30)).block();
+			assertThat(reach.output()).as(reach.output()).contains("reachable");
+			assertThat(sandbox.exec(run, "web", "cat hello.txt", Duration.ofSeconds(30)).block().output()).contains("hello");
+			assertThat(sandbox.exec(run, "wget -q -T 3 -O- http://example.com", Duration.ofSeconds(30)).block().succeeded())
+					.as("the private network has no way out").isFalse();
+		}
+		catch (java.io.IOException e) {
+			throw new java.io.UncheckedIOException(e);
+		}
+		finally {
+			sandbox.destroy(run).block();
+		}
+		assertThat(docker.listContainersCmd().withShowAll(true).withLabelFilter(Map.of(DockerSandbox.LABEL_RUN, run.toString()))
+				.exec()).isEmpty();
+		assertThat(docker.listNetworksCmd().withNameFilter(DockerSandbox.networkName(run)).exec()).isEmpty();
 	}
 
 	@Test

@@ -35,7 +35,7 @@ class AgentStageConfiguration {
 				: new AgentStages.Memory(new MemoryRecall(memory, sandbox, clock, properties.memory().retention()),
 						new MemoryTools(memory, store, sandbox, clock).remember());
 		return new AgentStages(models, workspace,
-				new SandboxTools(sandbox, checkout, properties.sandbox().commandTimeout()), limits,
+				new SandboxTools(sandbox, checkout, properties.sandbox().commandTimeout(), workspace), limits,
 				new AgentLoop.Limits(agent.maxTurns(), agent.maxOutputTokens(), agent.maxToolResultChars(),
 						agent.maxRepeats()), new AgentStages.Options(agent.testsFirst(), agent.specCritic()), recall);
 	}

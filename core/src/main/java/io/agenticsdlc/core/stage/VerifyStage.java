@@ -45,19 +45,26 @@ public final class VerifyStage implements StageHandler {
 
 	@Override
 	public Mono<StageOutcome> execute(StageContext context) {
+		// Only the services the change touches are built and tested (ADR-0006).
 		return workspace.prepare(context)
-				.flatMap(prepared -> workspace.runAll(context, prepared.profile().verifyCommands()))
-				.flatMap(results -> {
-					CommandResult last = results.getLast();
+				.flatMap(prepared -> workspace.diff(context).flatMap(diff -> workspace
+						.verify(context, prepared, TestPaths.changedFiles(diff))
+						.flatMap(results -> outcome(context, diff, results))))
+				.onErrorResume(RunWorkspace.UndetectableBuildException.class,
+						e -> Mono.just(new StageOutcome.Escalate(e.getMessage(), Usage.ZERO)));
+	}
+
+	private Mono<StageOutcome> outcome(StageContext context, String diff, List<CommandResult> results) {
+		return Mono.just(results)
+				.flatMap(ran -> {
+					CommandResult last = ran.getLast();
 					if (last.succeeded()) {
-						return workspace.diff(context).flatMap(diff -> scan(context, diff, results.size()));
+						return scan(context, diff, ran.size());
 					}
 					String why = last.timedOut() ? "timed out" : "exited with " + last.exitCode();
 					return Mono.just((StageOutcome) new StageOutcome.NeedsRework("`" + last.command() + "` " + why
 							+ ":\n" + last.tail(FAILURE_TAIL_CHARS), Usage.ZERO));
-				})
-				.onErrorResume(RunWorkspace.UndetectableBuildException.class,
-						e -> Mono.just(new StageOutcome.Escalate(e.getMessage(), Usage.ZERO)));
+				});
 	}
 
 	private Mono<StageOutcome> scan(StageContext context, String diff, int commands) {

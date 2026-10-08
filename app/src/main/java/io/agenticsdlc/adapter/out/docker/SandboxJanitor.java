@@ -43,6 +43,8 @@ public class SandboxJanitor {
 				.flatMapMany(Flux::fromIterable)
 				.map(Container::getLabels)
 				.map(labels -> UUID.fromString(labels.get(DockerSandbox.LABEL_RUN)))
+				// A run has a container per environment and sidecar; clean it up once.
+				.distinct()
 				.concatMap(runId -> store.find(runId)
 						.map(view -> view.run().state())
 						.defaultIfEmpty(RunState.DONE)

@@ -7,6 +7,7 @@ import io.agenticsdlc.core.agent.ToolCall;
 import io.agenticsdlc.core.agent.ToolException;
 import io.agenticsdlc.core.agent.ToolSpec;
 import io.agenticsdlc.core.workspace.CommandResult;
+import io.agenticsdlc.core.workspace.Environments;
 import io.agenticsdlc.core.workspace.NestedRepositoryException;
 import io.agenticsdlc.core.workspace.RepositoryCheckout;
 import io.agenticsdlc.core.workspace.Sandbox;
@@ -35,11 +36,18 @@ public final class SandboxTools {
 	private final Sandbox sandbox;
 	private final RepositoryCheckout checkout;
 	private final Duration commandTimeout;
+	private final Environments environments;
 
 	public SandboxTools(Sandbox sandbox, RepositoryCheckout checkout, Duration commandTimeout) {
+		this(sandbox, checkout, commandTimeout, Environments.NONE);
+	}
+
+	/** @param environments resolves {@code run_command}'s {@code service} to that service's environment (ADR-0006) */
+	public SandboxTools(Sandbox sandbox, RepositoryCheckout checkout, Duration commandTimeout, Environments environments) {
 		this.sandbox = Objects.requireNonNull(sandbox, "sandbox");
 		this.checkout = Objects.requireNonNull(checkout, "checkout");
 		this.commandTimeout = Objects.requireNonNull(commandTimeout, "commandTimeout");
+		this.environments = Objects.requireNonNull(environments, "environments");
 	}
 
 	/** Everything the coder needs. */
@@ -218,11 +226,23 @@ public final class SandboxTools {
 				restricted). Use it to build, run tests, or inspect the environment. Returns exit code and output.""", """
 				{"type":"object","required":["command"],"properties":{
 				"command":{"type":"string"},
+				"service":{"type":"string","description":"In a repository with several services: run in this service's toolchain, from its directory. Default: the repository root, main toolchain."},
 				"timeout_seconds":{"type":"integer","description":"Default and maximum: the configured limit."}}}""", true,
 				(runId, call) -> {
 					long max = commandTimeout.toSeconds();
 					long seconds = Math.clamp(call.integer("timeout_seconds", (int) Math.min(max, Integer.MAX_VALUE)), 1, max);
-					return exec(runId, call.requiredString("command"), Duration.ofSeconds(seconds))
+					String service = call.string("service");
+					Mono<CommandResult> run;
+					if (service == null || service.isBlank()) {
+						run = exec(runId, call.requiredString("command"), Duration.ofSeconds(seconds));
+					}
+					else {
+						Environments.Target target = environments.target(runId, service.strip()).orElseThrow(() ->
+								new ToolException("unknown service '" + service + "'; services: " + environments.services(runId)));
+						run = sandbox.exec(runId, target.environment(),
+								target.component().inDirectory(call.requiredString("command")), Duration.ofSeconds(seconds));
+					}
+					return run
 							.map(r -> (r.timedOut() ? "Timed out after " + seconds + "s" : "Exit code " + r.exitCode())
 									+ "\n" + r.output());
 				});
