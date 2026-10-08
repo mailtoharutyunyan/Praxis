@@ -4,6 +4,7 @@ import { ApiError } from "../lib/api";
 import type { Run, RunEvent } from "../lib/types";
 import { ApprovalPanel } from "./ApprovalPanel";
 import { DiffView } from "./DiffView";
+import { ProgressBar } from "./ProgressBar";
 import { RevisionPanel } from "./RevisionPanel";
 import { Timeline } from "./Timeline";
 
@@ -15,6 +16,7 @@ const run: Run = {
   task: { id: "t", origin: "PROMPT", externalRef: null, title: "Add search", description: "d", scmKind: "GITHUB",
     cloneUrl: "https://github.com/acme/shop.git", baseBranch: null, trust: "TRUSTED", requestedBy: "alice",
     createdAt: "2026-10-08T10:00:00Z" },
+  progress: { percent: 87, phase: "Waiting for approval: PUBLISH gate", step: 6, steps: 9, activity: "", waiting: true, finished: false },
 };
 
 const event = (seq: number, type: RunEvent["type"], payload: Record<string, unknown>): RunEvent =>
@@ -107,5 +109,17 @@ describe("RevisionPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: "Request changes" }));
     await waitFor(() => expect(box.value).toBe(""));
     expect(onRequest).toHaveBeenLastCalledWith("Use a constant", "src/App.java:4");
+  });
+});
+
+describe("ProgressBar", () => {
+  it("shows phase, step, percentage and activity", () => {
+    render(<ProgressBar progress={{ percent: 42, phase: "Implementing", step: 4, steps: 9,
+      activity: "coder: edit_file services/web/page.txt", waiting: false, finished: false }} />);
+    expect(screen.getByRole("progressbar").getAttribute("aria-valuenow")).toBe("42");
+    expect(screen.getByText("Implementing")).toBeTruthy();
+    expect(screen.getByText("42%")).toBeTruthy();
+    expect(screen.getByText(/step 4 of 9/)).toBeTruthy();
+    expect(screen.getByText("coder: edit_file services/web/page.txt")).toBeTruthy();
   });
 });

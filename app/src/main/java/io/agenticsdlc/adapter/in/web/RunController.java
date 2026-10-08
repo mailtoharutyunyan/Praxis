@@ -72,7 +72,7 @@ class RunController {
 
 	@GetMapping("/{runId}")
 	Mono<RunResponse> get(@PathVariable UUID runId) {
-		return queries.get(runId).map(RunResponse::of);
+		return queries.get(runId).flatMap(view -> queries.progress(view).map(progress -> RunResponse.of(view, progress)));
 	}
 
 	/** Event log page (JSON). For live updates use the {@code text/event-stream} variant of this endpoint. */

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { Api } from "../lib/api";
 import type { Run, RunState } from "../lib/types";
 import { NewTaskDialog } from "../components/NewTaskDialog";
+import { ProgressBar } from "../components/ProgressBar";
 import { StateBadge } from "../components/StateBadge";
 
 const FILTERS: { key: string; label: string; states: RunState[] }[] = [
@@ -74,7 +75,7 @@ export function RunsPage({ api, canSubmit, navigate }: { api: Api; canSubmit: bo
       <div className="card" style={{ padding: 0, overflowX: "auto" }}>
         <table>
           <thead>
-            <tr><th>Task</th><th>Repository</th><th>State</th><th>Risk</th><th>Cost</th><th>Created</th></tr>
+            <tr><th>Task</th><th>Repository</th><th>State</th><th>Progress</th><th>Risk</th><th>Cost</th><th>Created</th></tr>
           </thead>
           <tbody>
             {runs.map((run) => (
@@ -85,6 +86,7 @@ export function RunsPage({ api, canSubmit, navigate }: { api: Api; canSubmit: bo
                 </td>
                 <td className="small">{repoName(run.task.cloneUrl)}</td>
                 <td><StateBadge state={run.state} />{run.pendingGate && <div className="muted small">{run.pendingGate} gate</div>}</td>
+                <td>{run.progress && <ProgressBar progress={run.progress} compact />}</td>
                 <td className="small">{run.risk ?? "—"}</td>
                 <td className="small">${run.usage.costUsd.toFixed(2)}</td>
                 <td className="small muted">{ago(run.createdAt)}</td>

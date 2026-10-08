@@ -45,6 +45,18 @@ export interface Run {
   createdAt: string;
   updatedAt: string;
   task: TaskInfo;
+  progress: RunProgress;
+}
+
+/** Where a run stands: percentage, phase (step of steps) and current activity. */
+export interface RunProgress {
+  percent: number;
+  phase: string;
+  step: number;
+  steps: number;
+  activity: string;
+  waiting: boolean;
+  finished: boolean;
 }
 
 export interface RunPage {

@@ -46,6 +46,13 @@ public final class RunQueries {
 		return get(runId).thenMany(store.events(runId, afterSeq, clamp(limit)));
 	}
 
+	/** Where the run stands now, from its state and recent events. */
+	public Mono<RunProgress> progress(RunView view) {
+		return store.latestEvents(view.run().id(), Set.of(RunEventType.STATE_CHANGED, RunEventType.AGENT_MESSAGE,
+				RunEventType.TOOL_CALLED, RunEventType.COMMAND_OUTPUT), 300).collectList()
+				.map(events -> RunProgress.of(view.run(), events));
+	}
+
 	/** The newest artifact of a kind ({@code spec}, {@code diff}, {@code review}, {@code pull-request}), if any. */
 	public Mono<RunEvent> latestArtifact(UUID runId, String kind) {
 		return get(runId).then(store.latestEvents(runId, Set.of(RunEventType.ARTIFACT_PRODUCED), 200)

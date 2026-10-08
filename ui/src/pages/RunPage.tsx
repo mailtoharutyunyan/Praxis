@@ -6,6 +6,7 @@ import { TERMINAL } from "../lib/types";
 import { ApprovalPanel } from "../components/ApprovalPanel";
 import { Markdown } from "../components/Markdown";
 import { Pipeline } from "../components/Pipeline";
+import { ProgressBar } from "../components/ProgressBar";
 import { RevisionPanel } from "../components/RevisionPanel";
 import { StateBadge } from "../components/StateBadge";
 import { Timeline } from "../components/Timeline";
@@ -25,6 +26,8 @@ export function RunPage(props: {
   // Stale responses are ignored: requests for a previously shown run are aborted, and of overlapping
   // refreshes (bursts of events, polling after actions) an older response never replaces a newer one.
   const scope = useRef({ id, controller: new AbortController() });
+  const progressTimer = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(progressTimer.current), []);
   const issued = useRef(0);
   const applied = useRef(0);
 
@@ -59,6 +62,10 @@ export function RunPage(props: {
         setEvents((current) => current.some((e) => e.seq === event.seq) ? current : [...current, event]);
         if (event.type === "STATE_CHANGED" || event.type === "TRIAGED" || event.type === "RISK_RAISED"
           || event.type === "USAGE_RECORDED") void refresh();
+        // Progress moves with every agent step; refresh at most about once a second while it works.
+        else if (progressTimer.current === undefined) {
+          progressTimer.current = window.setTimeout(() => { progressTimer.current = undefined; void refresh(); }, 1000);
+        }
       },
       onEnd: () => void refresh(),
     });
@@ -115,6 +122,7 @@ export function RunPage(props: {
           <StateBadge state={run.state} />
           {run.task.trust === "UNTRUSTED" && <span className="badge warn" title="Text from an external system">untrusted source</span>}
         </div>
+        {run.progress && <ProgressBar progress={run.progress} />}
         <Pipeline run={run} />
         {prs.map((pr) => (
           <p key={String(pr.payload.url)} style={{ margin: 0 }}>

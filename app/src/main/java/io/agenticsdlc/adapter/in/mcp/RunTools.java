@@ -62,7 +62,7 @@ class RunTools {
 
 	record RunSummary(String id, String state, String pendingGate, String risk, String title, String repository,
 			String trust, String requestedBy, long totalTokens, double costUsd, String createdAt, String updatedAt,
-			String link, String next) {
+			String link, String next, int progressPercent, String phase, String activity) {
 	}
 
 	record EventSummary(long seq, String type, String actor, String at, String payload) {
@@ -123,7 +123,8 @@ class RunTools {
 			annotations = @McpTool.McpAnnotations(title = "Get a run", readOnlyHint = true, destructiveHint = false,
 					idempotentHint = true, openWorldHint = false))
 	Mono<RunSummary> getRun(@McpToolParam(description = "Run id (UUID).") String runId) {
-		return caller(VIEW).flatMap(user -> queries.get(uuid(runId))).map(this::summary);
+		return caller(VIEW).flatMap(user -> queries.get(uuid(runId)))
+				.flatMap(view -> queries.progress(view).map(progress -> summary(view, progress)));
 	}
 
 	@McpTool(name = "get_run_artifact", description = """
@@ -236,13 +237,18 @@ class RunTools {
 	}
 
 	RunSummary summary(RunView view) {
+		return summary(view, io.agenticsdlc.core.application.RunProgress.of(view.run()));
+	}
+
+	RunSummary summary(RunView view, io.agenticsdlc.core.application.RunProgress progress) {
 		Run run = view.run();
 		String id = run.id().toString();
 		return new RunSummary(id, run.state().name(), run.pendingGate() == null ? null : run.pendingGate().name(),
 				run.risk() == null ? null : run.risk().name(), view.task().title(),
 				view.task().repository().cloneUrl().toString(), view.task().trust().name(), view.task().requestedBy(),
 				run.usage().totalTokens(), run.usage().costMicroUsd() / 1_000_000.0, run.createdAt().toString(),
-				run.updatedAt().toString(), runLinkBase.isBlank() ? null : runLinkBase + id, next(run));
+				run.updatedAt().toString(), runLinkBase.isBlank() ? null : runLinkBase + id, next(run), progress.percent(),
+				progress.phase(), progress.activity());
 	}
 
 	/** What happens next, in words an assistant can relay to its user. */

@@ -2,6 +2,7 @@ package io.agenticsdlc.adapter.in.web;
 
 import io.agenticsdlc.core.domain.Companion;
 import io.agenticsdlc.core.domain.RepositoryRef;
+import io.agenticsdlc.core.application.RunProgress;
 import io.agenticsdlc.core.domain.Gate;
 import io.agenticsdlc.core.domain.GateDecision;
 import io.agenticsdlc.core.domain.RiskLevel;
@@ -67,11 +68,24 @@ final class ApiModels {
 	record RaiseRiskRequest(@NotNull RiskLevel risk, @NotBlank @Size(max = 4000) String reason) {
 	}
 
+	record ProgressResponse(int percent, String phase, int step, int steps, String activity, boolean waiting,
+			boolean finished) {
+		static ProgressResponse of(RunProgress progress) {
+			return new ProgressResponse(progress.percent(), progress.phase(), progress.step(), progress.steps(),
+					progress.activity(), progress.waiting(), progress.finished());
+		}
+	}
+
 	record RunResponse(UUID id, String state, String risk, List<String> gates, String pendingGate, String resumeState,
 			int fixIterations, int reviewLoops, UsageResponse usage, long version, Instant createdAt,
-			Instant updatedAt, TaskResponse task) {
+			Instant updatedAt, TaskResponse task, ProgressResponse progress) {
 
+		/** With progress from the run's state only (lists). */
 		static RunResponse of(RunView view) {
+			return of(view, RunProgress.of(view.run()));
+		}
+
+		static RunResponse of(RunView view, RunProgress progress) {
 			Run run = view.run();
 			Task task = view.task();
 			return new RunResponse(run.id(), run.state().name(), name(run.risk()),
@@ -85,7 +99,8 @@ final class ApiModels {
 							task.description(), task.repository().kind().name(), task.repository().cloneUrl(),
 							task.baseBranch(), task.trust().name(), task.requestedBy(), task.createdAt(),
 							task.companions().stream().map(c -> new CompanionResponse(c.alias(), c.repository().kind().name(),
-									c.repository().cloneUrl(), c.baseBranch())).toList()));
+									c.repository().cloneUrl(), c.baseBranch())).toList()),
+					ProgressResponse.of(progress));
 		}
 	}
 
