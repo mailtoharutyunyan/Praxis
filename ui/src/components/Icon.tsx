@@ -3,6 +3,7 @@ import { useId } from "react";
 /** Inline stroke icons (24×24, Lucide-style), so the UI needs no icon font or extra request. */
 const PATHS = {
   runs: "M3 12h4l3-8 4 16 3-8h4",
+  chart: "M3 3v18h18M8 17v-5M13 17V8M18 17v-9",
   memory: "M2 4h6a4 4 0 0 1 4 4v13a3 3 0 0 0-3-3H2zM22 4h-6a4 4 0 0 0-4 4v13a3 3 0 0 1 3-3h7z",
   settings: "M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6",
   plus: "M12 5v14M5 12h14",

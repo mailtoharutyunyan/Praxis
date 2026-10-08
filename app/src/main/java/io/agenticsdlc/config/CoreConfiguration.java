@@ -5,6 +5,8 @@ import io.agenticsdlc.core.application.RunCommands;
 import io.agenticsdlc.core.application.RunQueries;
 import io.agenticsdlc.core.application.TaskIntake;
 import io.agenticsdlc.core.engine.RunLimits;
+import io.agenticsdlc.core.insights.InsightsQueries;
+import io.agenticsdlc.core.insights.InsightsStore;
 import io.agenticsdlc.core.port.RunChangeSignals;
 import io.agenticsdlc.core.port.RunStore;
 import java.time.Clock;
@@ -55,5 +57,10 @@ class CoreConfiguration {
 	@Bean
 	RunQueries runQueries(RunStore store, RunChangeSignals signals, AgenticProperties properties) {
 		return new RunQueries(store, signals, properties.events().fallbackPoll());
+	}
+
+	@Bean
+	InsightsQueries insightsQueries(InsightsStore store, Clock clock) {
+		return new InsightsQueries(store, clock);
 	}
 }

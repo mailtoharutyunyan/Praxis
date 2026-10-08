@@ -3,6 +3,7 @@ import { Api } from "./lib/api";
 import { devSession, loadConfig, localSession, oidcSession, storeLocalToken, type Session, type UiConfig } from "./lib/auth";
 import { getSetup, type SetupStatus } from "./lib/setup";
 import { Icon, Logo } from "./components/Icon";
+import { InsightsPage } from "./pages/InsightsPage";
 import { MemoryPage } from "./pages/MemoryPage";
 import { OnboardingPage } from "./pages/OnboardingPage";
 import { RunPage } from "./pages/RunPage";
@@ -87,9 +88,10 @@ export function App() {
   }
   const isAdmin = session.roles.includes("admin");
   const runMatch = path.match(/^\/runs\/([0-9a-f-]{36})$/);
-  const section = ["/memory", "/settings", "/account", "/users"].includes(path) ? path.slice(1) : "runs";
+  const section = ["/insights", "/memory", "/settings", "/account", "/users"].includes(path) ? path.slice(1) : "runs";
   const nav = setup.complete && session.signedIn ? [
     { key: "runs", href: "#/", icon: "runs" as const, label: "Runs", count: attention },
+    { key: "insights", href: "#/insights", icon: "chart" as const, label: "Insights", count: 0 },
     { key: "memory", href: "#/memory", icon: "memory" as const, label: "Memory", count: 0 },
     { key: "account", href: "#/account", icon: "terminal" as const, label: "API & AI CLI", count: 0 },
     ...(isAdmin ? [{ key: "settings", href: "#/settings", icon: "settings" as const, label: "Settings", count: 0 }] : []),
@@ -154,6 +156,8 @@ export function App() {
           ) : runMatch ? (
             <RunPage api={api} id={runMatch[1]} token={session.token} roles={session.roles}
               pollSeconds={config.pullRequestPollSeconds} />
+          ) : path === "/insights" ? (
+            <InsightsPage api={api} />
           ) : path === "/memory" ? (
             <MemoryPage api={api} canModerate={session.roles.includes("approver")} />
           ) : (

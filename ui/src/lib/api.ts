@@ -1,5 +1,5 @@
 import type { Account, ApiTokenView, Connector, ConnectorUpdate, CreatedToken, SignedIn, TestResult } from "./setup";
-import type { FactStatus, Gate, GateDecision, Problem, RepoFact, RiskLevel, Run, RunEvent, RunPage, RunState, ScmKind } from "./types";
+import type { FactStatus, Gate, GateDecision, Insights, Problem, RepoFact, RiskLevel, Run, RunEvent, RunPage, RunState, ScmKind } from "./types";
 
 export class ApiError extends Error {
   constructor(readonly status: number, readonly problem: Problem) {
@@ -86,6 +86,10 @@ export class Api {
 
   setFactStatus(id: string, status: FactStatus): Promise<RepoFact> {
     return this.request(`/memory/${encodeURIComponent(id)}/status`, { method: "POST", body: JSON.stringify({ status }) });
+  }
+
+  insights(days: number, signal?: AbortSignal): Promise<Insights> {
+    return this.request(`/insights?days=${days}`, { signal });
   }
 
   requestRevision(id: string, text: string, location?: string): Promise<Run> {

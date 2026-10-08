@@ -470,6 +470,7 @@ All endpoints need a bearer token: a personal API token (`asdlc_…`), a JWT fro
 | `POST /api/v1/tasks` | operator | Submit a task. An optional `Idempotency-Key` header makes retries return the original run. |
 | `GET /api/v1/memory?repository=` | viewer | What agents learned about a repository: facts, citations, status. |
 | `POST /api/v1/memory/{id}/status` | approver | `{"status": "ACTIVE"}` or `"DISABLED"`. |
+| `GET /api/v1/insights?days=` | viewer | Delivery figures for the last 1–365 days (default 30): runs, outcomes, success rate, median/p90 minutes to pull request, cost, tokens, runs per day. |
 | `POST /api/v1/runs/{id}/revisions` | operator | Ask for changes to the open pull request: `{"text": "...", "location": "src/App.java:42"}`. |
 | `GET /api/v1/runs?state=&createdBefore=&beforeId=&limit=` | viewer | List runs, newest first. Pass a page's `nextCreatedBefore` and `nextBeforeId` to get the next page. |
 | `GET /api/v1/runs/{id}` | viewer | Run with its task, risk, gates and usage. |

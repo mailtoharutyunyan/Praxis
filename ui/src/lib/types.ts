@@ -102,3 +102,25 @@ export interface RepoFact {
   createdAt: string;
   expiresAt: string | null;
 }
+
+/** Runs created on a UTC date (YYYY-MM-DD). */
+export interface DailyCount {
+  date: string;
+  count: number;
+}
+
+/** Delivery figures for the runs created in the last {@link Insights.days} days. */
+export interface Insights {
+  days: number;
+  from: string;
+  to: string;
+  runsStarted: number;
+  finished: { DONE: number; FAILED: number; CANCELLED: number };
+  /** DONE over finished runs, 0..1; null when none finished. */
+  successRate: number | null;
+  minutesToPullRequest: { median: number | null; p90: number | null; count: number };
+  costUsd: number;
+  totalTokens: number;
+  /** One entry per day, oldest first. */
+  runsPerDay: DailyCount[];
+}
