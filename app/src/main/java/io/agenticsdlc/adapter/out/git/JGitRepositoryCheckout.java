@@ -8,6 +8,7 @@ import io.agenticsdlc.core.scm.ChangePublisher;
 import io.agenticsdlc.core.workspace.CheckoutInfo;
 import io.agenticsdlc.core.workspace.NestedRepositoryException;
 import io.agenticsdlc.core.workspace.ProjectConfig;
+import io.agenticsdlc.core.workspace.PushAccessDeniedException;
 import io.agenticsdlc.core.workspace.RepositoryCheckout;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -147,11 +148,20 @@ public class JGitRepositoryCheckout implements RepositoryCheckout, ChangePublish
 			}
 			String commit = repository.resolve("HEAD").name();
 			String url = rewrite(tree.repository().cloneUrl().toString());
-			Iterable<org.eclipse.jgit.transport.PushResult> results = git.push()
-					.setRemote(url)
-					.setRefSpecs(new org.eclipse.jgit.transport.RefSpec("refs/heads/" + workBranch + ":refs/heads/" + workBranch))
-					.setCredentialsProvider(credentials(tree.repository().kind(), url))
-					.call();
+			Iterable<org.eclipse.jgit.transport.PushResult> results;
+			try {
+				results = git.push()
+						.setRemote(url)
+						.setRefSpecs(new org.eclipse.jgit.transport.RefSpec("refs/heads/" + workBranch + ":refs/heads/" + workBranch))
+						.setCredentialsProvider(credentials(tree.repository().kind(), url))
+						.call();
+			}
+			catch (org.eclipse.jgit.api.errors.TransportException e) {
+				if (denied(e)) {
+					throw new PushAccessDeniedException(redact(url));
+				}
+				throw e;
+			}
 			for (org.eclipse.jgit.transport.PushResult result : results) {
 				for (org.eclipse.jgit.transport.RemoteRefUpdate update : result.getRemoteUpdates()) {
 					var status = update.getStatus();
@@ -165,6 +175,58 @@ public class JGitRepositoryCheckout implements RepositoryCheckout, ChangePublish
 			log.info("pushed {} at {} to {} for run {}", workBranch, commit, redact(url), runId);
 			return new PushedBranch(workBranch, repository.getConfig().getString(SECTION, null, "baseBranch"), commit);
 		}
+	}
+
+	@Override
+	public Mono<Void> verifyPushAccess(RunView view) {
+		return Mono.fromRunnable(() -> {
+			List<Tree> trees = new java.util.ArrayList<>(List.of(primary(view)));
+			trees.addAll(companions(view));
+			for (Tree tree : trees) {
+				verifyPushAccess(view.run().id(), tree);
+			}
+		}).subscribeOn(Schedulers.boundedElastic()).then();
+	}
+
+	/**
+	 * A dry-run push of the work branch: the code host checks the credentials for receive-pack exactly as for a real
+	 * push, but nothing is sent. Asking the API for permissions would not do: it reports the user's rights, not those
+	 * of a narrower token.
+	 */
+	private void verifyPushAccess(UUID runId, Tree tree) {
+		String workBranch = "agent/" + runId;
+		String url = rewrite(tree.repository().cloneUrl().toString());
+		try (Repository repository = open(tree); Git git = new Git(repository)) {
+			git.push().setRemote(url).setDryRun(true)
+					.setRefSpecs(new org.eclipse.jgit.transport.RefSpec("HEAD:refs/heads/" + workBranch))
+					.setCredentialsProvider(credentials(tree.repository().kind(), url))
+					.call();
+		}
+		catch (org.eclipse.jgit.api.errors.TransportException e) {
+			if (denied(e)) {
+				throw new PushAccessDeniedException(redact(url));
+			}
+			throw new java.io.UncheckedIOException(new IOException("cannot check push access to " + redact(url), e));
+		}
+		catch (IOException e) {
+			throw new java.io.UncheckedIOException(e);
+		}
+		catch (GitAPIException e) {
+			throw new IllegalStateException("cannot check push access to " + redact(url), e);
+		}
+	}
+
+	/** How code hosts word a refused push: GitHub "git-receive-pack not permitted", others 403 or "not authorized". */
+	static boolean denied(Exception e) {
+		for (Throwable t = e; t != null; t = t.getCause()) {
+			String message = String.valueOf(t.getMessage()).toLowerCase(java.util.Locale.ROOT);
+			if (message.contains("not permitted") || message.contains("403") || message.contains("not authorized")
+					|| message.contains("authentication is required") || message.contains("access denied")
+					|| message.contains("permission to") && message.contains("denied")) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	@Override

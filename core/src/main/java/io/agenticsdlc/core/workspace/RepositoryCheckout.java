@@ -29,4 +29,14 @@ public interface RepositoryCheckout {
 
 	/** Delete the working copy and its git metadata. Idempotent. */
 	Mono<Void> remove(UUID runId);
+
+	/**
+	 * Checks, without changing anything, that the configured credentials may push to every repository of the run, so a
+	 * read-only token stops the run before any model work instead of at publishing.
+	 *
+	 * @return errors with {@link PushAccessDeniedException} when the code host refuses
+	 */
+	default Mono<Void> verifyPushAccess(RunView view) {
+		return Mono.empty();
+	}
 }

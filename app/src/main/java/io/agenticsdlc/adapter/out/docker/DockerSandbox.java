@@ -150,7 +150,13 @@ public class DockerSandbox implements Sandbox {
 	 */
 	@Override
 	public Flux<String> execLines(UUID runId, String command, Map<String, String> env, Duration timeout) {
-		String container = containerName(runId);
+		return execLines(runId, SandboxSpec.MAIN, command, env, timeout);
+	}
+
+	@Override
+	public Flux<String> execLines(UUID runId, String environment, String command, Map<String, String> env,
+			Duration timeout) {
+		String container = containerName(runId, environment);
 		return Flux.<String>create(sink -> {
 			String pidFile = "/tmp/.agentic/exec-" + UUID.randomUUID() + ".pid";
 			long seconds = Math.max(1, timeout.toSeconds());

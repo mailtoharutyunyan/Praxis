@@ -50,6 +50,12 @@ public interface Sandbox {
 		return Flux.error(new UnsupportedOperationException("this sandbox cannot stream command output"));
 	}
 
+	/** {@link #execLines(UUID, String, Map, Duration)} in the named environment. */
+	default Flux<String> execLines(UUID runId, String environment, String command, Map<String, String> env,
+			Duration timeout) {
+		return execLines(runId, command, env, timeout);
+	}
+
 	/**
 	 * Read a UTF-8 text file. Paths are relative to {@link #WORKDIR}; symlinks resolve inside the container, never
 	 * on the host. Errors with {@link java.nio.file.NoSuchFileException} if absent, {@link IllegalArgumentException}

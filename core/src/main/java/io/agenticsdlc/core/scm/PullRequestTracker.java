@@ -27,6 +27,8 @@ public final class PullRequestTracker {
 	private final RepoMemory memory;
 	private final java.time.Clock clock;
 	private final java.time.Duration retention;
+	private java.util.function.BiConsumer<UUID, Throwable> onError = (run, error) -> {
+	};
 
 	public PullRequestTracker(RunStore store, PullRequests pullRequests, RunCommands commands) {
 		this(store, pullRequests, commands, null, java.time.Clock.systemUTC(), java.time.Duration.ZERO);
@@ -46,11 +48,23 @@ public final class PullRequestTracker {
 		this.retention = Objects.requireNonNull(retention, "retention");
 	}
 
+	/**
+	 * Called when checking a run's pull requests fails (the code host is down, the token lost access); the sweep goes
+	 * on with the next run, so without this a failure would go unnoticed.
+	 */
+	public PullRequestTracker onError(java.util.function.BiConsumer<UUID, Throwable> listener) {
+		this.onError = Objects.requireNonNull(listener, "listener");
+		return this;
+	}
+
 	/** Checks every open pull request once, page by page; emits the runs that finished. */
 	public Flux<UUID> sweep() {
 		return page(null)
 				.expand(page -> page.size() < BATCH ? Mono.empty() : page(cursorOf(page.getLast())))
-				.concatMap(page -> Flux.fromIterable(page).concatMap(view -> check(view).onErrorResume(e -> Mono.empty())));
+				.concatMap(page -> Flux.fromIterable(page).concatMap(view -> check(view).onErrorResume(e -> {
+					onError.accept(view.run().id(), e);
+					return Mono.empty();
+				})));
 	}
 
 	private Mono<java.util.List<RunView>> page(RunStore.Cursor before) {

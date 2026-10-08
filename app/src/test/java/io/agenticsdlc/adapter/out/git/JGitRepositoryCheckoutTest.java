@@ -159,6 +159,37 @@ class JGitRepositoryCheckoutTest {
 	}
 
 	@Test
+	void pushAccessIsCheckedWithADryRunThatChangesNothing() throws Exception {
+		Path bare = tmp.resolve("remote.git");
+		try (Git git = Git.cloneRepository().setURI(tmp.resolve("source").toUri().toString()).setBare(true)
+				.setDirectory(bare.toFile()).call()) {
+			// a bare copy the run can push to, standing in for the provider
+		}
+		JGitRepositoryCheckout pushing = new JGitRepositoryCheckout(paths, Map.of(), Map.of(URL, bare.toUri().toString()),
+				1, "Agentic SDLC", "bot@example.com");
+		pushing.checkout(view).block();
+		pushing.verifyPushAccess(view).block();
+		try (Repository remote = new FileRepositoryBuilder().setGitDir(bare.toFile()).build()) {
+			assertThat(remote.resolve("refs/heads/agent/" + view.run().id())).as("a dry run pushes nothing").isNull();
+		}
+	}
+
+	@Test
+	void refusedPushesAreRecognisedAcrossCodeHosts() {
+		assertThat(JGitRepositoryCheckout.denied(new org.eclipse.jgit.api.errors.TransportException(
+				"https://github.com/acme/shop.git: git-receive-pack not permitted on 'https://github.com/acme/shop.git/'")))
+				.isTrue();
+		assertThat(JGitRepositoryCheckout.denied(new org.eclipse.jgit.api.errors.TransportException("x",
+				new java.io.IOException("https://gitlab.com/a/b.git: 403 Forbidden")))).isTrue();
+		assertThat(JGitRepositoryCheckout.denied(new org.eclipse.jgit.api.errors.TransportException(
+				"remote: Permission to acme/shop.git denied to bot."))).isTrue();
+		assertThat(JGitRepositoryCheckout.denied(new org.eclipse.jgit.api.errors.TransportException(
+				"https://github.com/acme/shop.git: connection reset"))).isFalse();
+		assertThat(new io.agenticsdlc.core.workspace.PushAccessDeniedException("https://github.com/acme/shop.git")
+				.getMessage()).contains("Contents: Read and write", "resume the run");
+	}
+
+	@Test
 	void commitsAndPushesTheWorkBranchIdempotently() throws Exception {
 		Path bare = tmp.resolve("remote.git");
 		try (Git git = Git.cloneRepository().setURI(tmp.resolve("source").toUri().toString()).setBare(true)

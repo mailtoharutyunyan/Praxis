@@ -152,7 +152,8 @@ export function App() {
             <AccountPage api={api} subject={session.subject ?? ""} roles={session.roles} local={local}
               onPasswordChanged={(signedIn) => { storeLocalToken(signedIn.token); bump(); }} />
           ) : runMatch ? (
-            <RunPage api={api} id={runMatch[1]} token={session.token} roles={session.roles} />
+            <RunPage api={api} id={runMatch[1]} token={session.token} roles={session.roles}
+              pollSeconds={config.pullRequestPollSeconds} />
           ) : path === "/memory" ? (
             <MemoryPage api={api} canModerate={session.roles.includes("approver")} />
           ) : (

@@ -22,6 +22,7 @@ class UiConfigController {
 		values.put("clientId", ui.clientId());
 		values.put("scope", ui.scope());
 		values.put("rolesClaim", properties.security().rolesClaim());
+		values.put("pullRequestPollSeconds", properties.scm().pullRequestPollInterval().toSeconds());
 		this.config = Map.copyOf(values);
 	}
 

@@ -165,7 +165,7 @@ public record AgenticProperties(@Valid @NotNull Worker worker, @Valid @NotNull L
 			@DefaultValue("1") @Min(0) int cloneDepth, @DefaultValue({}) java.util.Map<String, String> apiUrls,
 			@DefaultValue("Agentic SDLC") @NotBlank String authorName,
 			@DefaultValue("agentic-sdlc@noreply.invalid") @NotBlank String authorEmail,
-			@DefaultValue("false") boolean draftPullRequests, @DefaultValue("2m") @NotNull Duration pullRequestPollInterval,
+			@DefaultValue("false") boolean draftPullRequests, @DefaultValue("30s") @NotNull Duration pullRequestPollInterval,
 			@Valid @NotNull @DefaultValue Feedback feedback) {
 	}
 

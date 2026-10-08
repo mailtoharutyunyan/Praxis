@@ -56,6 +56,15 @@ public interface ExternalAgent {
 	Mono<AgentLoop.Outcome> run(StageContext context, AgentRole role, Access access, String actor, String system,
 			String brief, long tokenBudget);
 
+	/**
+	 * {@link #run(StageContext, AgentRole, Access, String, String, String, long)} in the named sandbox environment,
+	 * the one with the toolchain of what the call works on.
+	 */
+	default Mono<AgentLoop.Outcome> run(StageContext context, AgentRole role, Access access, String actor, String system,
+			String brief, long tokenBudget, String environment) {
+		return run(context, role, access, actor, system, brief, tokenBudget);
+	}
+
 	/** No external engine: every agent runs in the {@link AgentLoop}. */
 	ExternalAgent NONE = new ExternalAgent() {
 		@Override

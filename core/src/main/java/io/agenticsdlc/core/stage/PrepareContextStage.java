@@ -31,6 +31,7 @@ public final class PrepareContextStage implements StageHandler {
 	@Override
 	public Mono<StageOutcome> execute(StageContext context) {
 		return workspace.prepare(context)
+				.flatMap(prepared -> workspace.verifyPushAccess(context).thenReturn(prepared))
 				.flatMap(prepared -> workspace.baseline(context, prepared).map(results -> {
 					boolean passed = results.stream().allMatch(CommandResult::succeeded);
 					Map<String, Object> summary = new LinkedHashMap<>();
@@ -47,6 +48,9 @@ public final class PrepareContextStage implements StageHandler {
 					return (StageOutcome) new StageOutcome.Completed(Usage.ZERO, summary);
 				}))
 				.onErrorResume(RunWorkspace.UndetectableBuildException.class,
+						e -> Mono.just(new StageOutcome.Escalate(e.getMessage(), Usage.ZERO)))
+				// Before any model work: a read-only token would otherwise only fail at publishing.
+				.onErrorResume(io.agenticsdlc.core.workspace.PushAccessDeniedException.class,
 						e -> Mono.just(new StageOutcome.Escalate(e.getMessage(), Usage.ZERO)));
 	}
 }

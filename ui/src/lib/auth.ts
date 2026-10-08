@@ -7,6 +7,8 @@ export interface UiConfig {
   clientId?: string;
   scope?: string;
   rolesClaim: string;
+  /** How often the server checks open pull requests for a merge. */
+  pullRequestPollSeconds?: number;
 }
 
 export interface Session {

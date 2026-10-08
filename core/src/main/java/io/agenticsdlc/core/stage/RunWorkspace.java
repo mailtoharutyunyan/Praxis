@@ -56,6 +56,11 @@ public final class RunWorkspace implements Environments {
 	}
 
 	/** Errors with {@link UndetectableBuildException} when no service's toolchain can be determined. */
+	/** See {@link RepositoryCheckout#verifyPushAccess}. */
+	public Mono<Void> verifyPushAccess(StageContext context) {
+		return checkout.verifyPushAccess(context.view());
+	}
+
 	public Mono<Prepared> prepare(StageContext context) {
 		UUID runId = context.run().id();
 		return checkout.checkout(context.view())
@@ -172,6 +177,41 @@ public final class RunWorkspace implements Environments {
 		}
 		return plan.components().stream().filter(c -> c.name().equals(service)).findFirst()
 				.map(c -> new Target(environment(plan, c), c));
+	}
+
+	/**
+	 * The environment whose toolchain fits a brief: the service whose directory the brief names most often (a
+	 * specification lists the files it changes), else {@link SandboxSpec#MAIN}. An agent with a shell in that
+	 * environment can build and test what it changes, e.g. a UI change in the Node environment, not the Java one.
+	 */
+	public String environmentFor(UUID runId, String brief) {
+		return environmentFor(plans.get(runId), brief);
+	}
+
+	static String environmentFor(BuildPlan plan, String brief) {
+		if (plan == null || brief == null) {
+			return SandboxSpec.MAIN;
+		}
+		BuildPlan.Component best = null;
+		int bestCount = 0;
+		for (BuildPlan.Component component : plan.components()) {
+			if (component.path().equals(".")) {
+				continue;
+			}
+			int count = 0;
+			for (int at = brief.indexOf(component.path() + "/"); at >= 0; at = brief.indexOf(component.path() + "/", at + 1)) {
+				// A whole path segment: "ui/" in "ui/src", not in "tui/src".
+				if (at == 0 || !Character.isLetterOrDigit(brief.charAt(at - 1)) && brief.charAt(at - 1) != '-'
+						&& brief.charAt(at - 1) != '_') {
+					count++;
+				}
+			}
+			if (count > bestCount) {
+				best = component;
+				bestCount = count;
+			}
+		}
+		return best == null ? SandboxSpec.MAIN : environment(plan, best);
 	}
 
 	@Override

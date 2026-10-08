@@ -12,6 +12,7 @@ import io.agenticsdlc.core.engine.StageContext;
 import io.agenticsdlc.core.workspace.CommandFailedException;
 import io.agenticsdlc.core.workspace.RepositoryCheckout;
 import io.agenticsdlc.core.workspace.Sandbox;
+import io.agenticsdlc.core.workspace.SandboxSpec;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.nio.charset.StandardCharsets;
@@ -133,6 +134,12 @@ public final class ClaudeCodeAgent implements ExternalAgent {
 	@Override
 	public Mono<AgentLoop.Outcome> run(StageContext context, AgentRole role, Access access, String actor, String system,
 			String brief, long tokenBudget) {
+		return run(context, role, access, actor, system, brief, tokenBudget, SandboxSpec.MAIN);
+	}
+
+	@Override
+	public Mono<AgentLoop.Outcome> run(StageContext context, AgentRole role, Access access, String actor, String system,
+			String brief, long tokenBudget, String environment) {
 		Setup current = setup.get().orElseThrow(() -> new IllegalStateException("agents do not run on Claude Code"));
 		UUID runId = context.run().id();
 		String dir = ClaudeCodeCommand.SCRATCH + "/" + UUID.randomUUID();
@@ -140,11 +147,12 @@ public final class ClaudeCodeAgent implements ExternalAgent {
 				properties.maxTurns(), access, dir, remainingUsd(context));
 		StreamJsonTranscript transcript = new StreamJsonTranscript(context, actor, current.token(), tokenBudget, json);
 		String instructions = access == Access.NONE ? system : system + ENGINE_NOTE.formatted(dir + "/changes.diff");
-		Mono<Void> files = write(runId, dir + "/system.md", instructions).then(write(runId, dir + "/brief.md", brief))
+		Mono<Void> files = write(runId, environment, dir + "/system.md", instructions)
+				.then(write(runId, environment, dir + "/brief.md", brief))
 				.then(access == Access.NONE ? Mono.empty()
-						: checkout.diff(runId).flatMap(diff -> write(runId, dir + "/changes.diff", diff)));
+						: checkout.diff(runId).flatMap(diff -> write(runId, environment, dir + "/changes.diff", diff)));
 		return files
-				.thenMany(sandbox.execLines(runId, command.line(), command.env(), properties.timeout()))
+				.thenMany(sandbox.execLines(runId, environment, command.line(), command.env(), properties.timeout()))
 				.concatMap(line -> transcript.accept(line).thenReturn(transcript.overBudget()))
 				// Cancelling the output kills the CLI.
 				.takeUntil(over -> over)
@@ -152,7 +160,7 @@ public final class ClaudeCodeAgent implements ExternalAgent {
 				.onErrorResume(CommandFailedException.class, e -> Mono.just(transcript.failed(e.result())))
 				.flatMap(outcome -> access == Access.FULL || access == Access.TESTS_ONLY
 						? withoutCredential(runId, current.token(), outcome) : Mono.just(outcome))
-				.flatMap(outcome -> sandbox.exec(runId, "rm -rf " + shellQuote(dir), FILE_TIMEOUT)
+				.flatMap(outcome -> sandbox.exec(runId, environment, "rm -rf " + shellQuote(dir), FILE_TIMEOUT)
 						.onErrorResume(e -> Mono.empty()).thenReturn(outcome));
 	}
 
@@ -174,7 +182,7 @@ public final class ClaudeCodeAgent implements ExternalAgent {
 	 * Writes a scratch file in the container, readable only by the sandbox user. The content travels base64-encoded
 	 * in the environment, in chunks well under the kernel's limit per variable.
 	 */
-	private Mono<Void> write(UUID runId, String path, String content) {
+	private Mono<Void> write(UUID runId, String environment, String path, String content) {
 		byte[] bytes = content.getBytes(StandardCharsets.UTF_8);
 		int chunks = Math.max(1, (bytes.length + CHUNK_BYTES - 1) / CHUNK_BYTES);
 		String parent = path.substring(0, path.lastIndexOf('/'));
@@ -183,7 +191,7 @@ public final class ClaudeCodeAgent implements ExternalAgent {
 					Math.min(bytes.length, (i + 1) * CHUNK_BYTES)));
 			String script = (i == 0 ? "umask 077 && mkdir -p " + shellQuote(parent) + " && " : "")
 					+ "printf '%s' \"$AGENTIC_DATA\" | base64 -d " + (i == 0 ? ">" : ">>") + " " + shellQuote(path);
-			return sandbox.execLines(runId, script, Map.of("AGENTIC_DATA", data), FILE_TIMEOUT).then();
+			return sandbox.execLines(runId, environment, script, Map.of("AGENTIC_DATA", data), FILE_TIMEOUT).then();
 		}).then();
 	}
 }

@@ -432,7 +432,8 @@ public final class AgentStages {
 		return switch (external.choose(context.task())) {
 			case ExternalAgent.Choice.Loop loop -> new AgentLoop(models.forRole(role), roleTools, limits)
 					.run(context, actor, system, brief, budget);
-			case ExternalAgent.Choice.External cli -> external.run(context, role, access, actor, system, brief, budget);
+			case ExternalAgent.Choice.External cli -> external.run(context, role, access, actor, system, brief, budget,
+					workspace.environmentFor(context.run().id(), brief));
 			case ExternalAgent.Choice.Unavailable(String reason) -> Mono.error(new IllegalStateException(reason));
 		};
 	}

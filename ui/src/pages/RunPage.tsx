@@ -17,8 +17,10 @@ export function RunPage(props: {
   id: string;
   token: () => Promise<string | null>;
   roles: string[];
+  /** How often the server checks open pull requests for a merge (from /ui-config.json). */
+  pollSeconds?: number;
 }) {
-  const { api, id, token, roles } = props;
+  const { api, id, token, roles, pollSeconds } = props;
   const [run, setRun] = useState<Run | null>(null);
   const [events, setEvents] = useState<RunEvent[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -160,6 +162,13 @@ export function RunPage(props: {
             </div>
           </div>
         ))}
+        {run.state === "PR_OPEN" && prs.length > 0 && (
+          <div className="callout" role="status">
+            <Icon name="clock" />
+            <div>Waiting for the pull request{prs.length > 1 ? "s" : ""} to be merged. Merge on the code host; this run
+              notices within {pollSeconds ?? 30} seconds and finishes (closing without merging cancels it).</div>
+          </div>
+        )}
         {run.state === "NEEDS_HUMAN" && (
           <div className="callout warn">
             <Icon name="alert" />

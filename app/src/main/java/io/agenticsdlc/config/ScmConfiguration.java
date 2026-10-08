@@ -49,7 +49,8 @@ class ScmConfiguration {
 	PullRequestTracker pullRequestTracker(RunStore store, PullRequests pullRequests, RunCommands commands,
 			RepoMemory memory, java.time.Clock clock, AgenticProperties properties) {
 		return new PullRequestTracker(store, pullRequests, commands, properties.memory().enabled() ? memory : null, clock,
-				properties.memory().retention());
+				properties.memory().retention())
+				.onError((run, error) -> log.warn("cannot check the pull requests of run {}: {}", run, error.getMessage()));
 	}
 
 	/** Polls open pull requests; merged ones finish their run, closed ones cancel it. One instance at a time. */
