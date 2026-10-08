@@ -56,7 +56,8 @@ public final class ConnectorSettings {
 	public record SlackChoice(String botToken, String signingSecret, String defaultKind, String defaultRepository) {
 	}
 
-	public record FeedbackChoice(String mention, String githubSecret, String gitlabToken) {
+	public record FeedbackChoice(String mention, String githubSecret, String gitlabToken, String bitbucketSecret,
+			String azureDevOpsSecret) {
 	}
 
 	private final ConnectorStore store;
@@ -271,6 +272,8 @@ public final class ConnectorSettings {
 		return new FeedbackChoice(
 				c.map(x -> x.text("mention")).filter(v -> !v.isBlank()).orElse(props.mention()),
 				c.map(x -> x.secret("githubSecret")).filter(v -> !v.isBlank()).orElse(props.githubSecret()),
-				c.map(x -> x.secret("gitlabToken")).filter(v -> !v.isBlank()).orElse(props.gitlabToken()));
+				c.map(x -> x.secret("gitlabToken")).filter(v -> !v.isBlank()).orElse(props.gitlabToken()),
+				c.map(x -> x.secret("bitbucketSecret")).filter(v -> !v.isBlank()).orElse(props.bitbucketSecret()),
+				c.map(x -> x.secret("azureDevOpsSecret")).filter(v -> !v.isBlank()).orElse(props.azureDevOpsSecret()));
 	}
 }

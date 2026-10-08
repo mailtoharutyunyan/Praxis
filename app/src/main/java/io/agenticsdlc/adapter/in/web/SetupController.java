@@ -85,7 +85,9 @@ class SetupController {
 					.anyMatch(p -> !p.apiKey().isBlank() || p.type().equals("bedrock"));
 			case ConnectorCatalog.JIRA -> properties.jira().enabled();
 			case ConnectorCatalog.WEBHOOKS -> !properties.scm().feedback().githubSecret().isBlank()
-					|| !properties.scm().feedback().gitlabToken().isBlank();
+					|| !properties.scm().feedback().gitlabToken().isBlank()
+					|| !properties.scm().feedback().bitbucketSecret().isBlank()
+					|| !properties.scm().feedback().azureDevOpsSecret().isBlank();
 			default -> false;
 		};
 		return fromProperties ? "DONE" : "PENDING";

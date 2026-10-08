@@ -265,8 +265,18 @@ Repeated deliveries are ignored, and a run allows `agentic.scm.feedback.max-revi
 |---|---|---|---|
 | GitHub | `/api/v1/webhooks/github` | Issue comments, Pull request review comments, Pull request reviews, Workflow runs | `agentic.scm.feedback.github-secret` (`X-Hub-Signature-256`) |
 | GitLab | `/api/v1/webhooks/gitlab` | Comments, Pipeline events | `agentic.scm.feedback.gitlab-token` (`X-Gitlab-Token`) |
+| Bitbucket Cloud | `/api/v1/webhooks/bitbucket` | Pull request: Comment created; Repository: Build status created, Build status updated | `agentic.scm.feedback.bitbucket-secret` (the webhook's secret, `X-Hub-Signature`) |
+| Azure DevOps | `/api/v1/webhooks/azure-devops` | Two Web Hooks service hooks: Pull request commented on, Build completed | `agentic.scm.feedback.azure-devops-secret` (the service hook's basic authentication password; any user name) |
 
-The token needs read access to CI (GitHub: Actions read; GitLab: `api` scope), and on GitHub it also needs to read collaborator permissions. On Bitbucket and Azure DevOps, use the API, MCP or UI to request revisions; replies are still posted on the pull request.
+The token needs read access to CI (GitHub: Actions read; GitLab: `api` scope), and on GitHub it also needs to read collaborator permissions. Some notes on the other hosts:
+- **Bitbucket Cloud.**
+  - Checking who can push lists the repository's user permissions, which needs admin permission on the repository. Use a workspace access token with the Repositories: Admin and Pipelines: Read scopes.
+  - Bitbucket Pipelines failures come with the failed steps' logs. A build from another CI server only gives its name, link and description.
+- **Azure DevOps.**
+  - The PAT also needs Build (read), Identity (read) and Security (manage) scopes. They are used to read build logs and to check who can contribute to the repository.
+  - Use HTTPS: basic authentication sends the password with every request.
+  - Line comments do not carry their file and line, because the event does not include them.
+  - Only builds of Azure Repos repositories are used.
 
 ## Jira
 Label an issue `agentic` (or whatever `agentic.jira.trigger-label` is) to start a run. A run starts when the issue is created with the label, or when the label is added later. `POST /api/v1/webhooks/jira` accepts two senders:

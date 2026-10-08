@@ -110,7 +110,12 @@ public final class ConnectorCatalog {
 							Field.secret("githubSecret", "GitHub webhook secret", false, "For /api/v1/webhooks/github "
 									+ "(issue comments, reviews, workflow runs)"),
 							Field.secret("gitlabToken", "GitLab webhook token", false, "For /api/v1/webhooks/gitlab "
-									+ "(comments, pipelines)"))));
+									+ "(comments, pipelines)"),
+							Field.secret("bitbucketSecret", "Bitbucket webhook secret", false, "For "
+									+ "/api/v1/webhooks/bitbucket (pull request comments, build status)"),
+							Field.secret("azureDevOpsSecret", "Azure DevOps service hook password", false, "For "
+									+ "/api/v1/webhooks/azure-devops: the basic authentication password of the service "
+									+ "hooks (pull request commented on, build completed); any user name"))));
 
 	private ConnectorCatalog() {
 	}

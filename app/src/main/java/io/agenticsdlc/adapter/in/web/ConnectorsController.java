@@ -85,7 +85,8 @@ class ConnectorsController {
 			case ConnectorCatalog.JIRA -> Map.of("jira", base + "/api/v1/webhooks/jira");
 			case ConnectorCatalog.SLACK -> Map.of("slashCommand", base + "/api/v1/webhooks/slack/commands");
 			case ConnectorCatalog.WEBHOOKS -> Map.of("github", base + "/api/v1/webhooks/github", "gitlab",
-					base + "/api/v1/webhooks/gitlab");
+					base + "/api/v1/webhooks/gitlab", "bitbucket", base + "/api/v1/webhooks/bitbucket", "azureDevOps",
+					base + "/api/v1/webhooks/azure-devops");
 			default -> Map.of();
 		};
 		return new ConnectorView(definition, stored.map(ConnectorSettings.Connector::status).orElse("PENDING"),
