@@ -19,7 +19,8 @@ import org.springframework.validation.annotation.Validated;
 public record AgenticProperties(@Valid @NotNull Worker worker, @Valid @NotNull Limits limits,
 		@Valid @NotNull Gates gates, @Valid @NotNull Security security, @Valid @NotNull Events events,
 		@Valid @NotNull StubStages stubStages, @Valid @NotNull Sandbox sandbox, @Valid @NotNull Scm scm,
-		@Valid @NotNull Models models, @Valid @NotNull Agent agent, @Valid @NotNull Jira jira, @Valid @NotNull Ui ui) {
+		@Valid @NotNull Models models, @Valid @NotNull Agent agent, @Valid @NotNull Jira jira, @Valid @NotNull Ui ui,
+		@Valid @NotNull @DefaultValue Mcp mcp) {
 
 	/**
 	 * @param enabled run the background worker on this instance (disable for API-only replicas)
@@ -200,5 +201,15 @@ public record AgenticProperties(@Valid @NotNull Worker worker, @Valid @NotNull L
 	 */
 	public record Ui(@DefaultValue("oidc") @NotBlank String authMode, @DefaultValue("") String issuer,
 			@DefaultValue("") String clientId, @DefaultValue("openid profile") String scope) {
+	}
+
+	/**
+	 * MCP server for AI clients (ADR-0005); its endpoint is {@code spring.ai.mcp.server.streamable-http.mcp-endpoint}.
+	 *
+	 * @param runLinkBase prefix for links to a run in the UI, e.g. {@code https://agentic.example.com/#/runs/}
+	 * @param resource this server's public MCP URL, advertised to clients in the OAuth protected resource metadata;
+	 *        empty to derive it from the request
+	 */
+	public record Mcp(@DefaultValue("") String runLinkBase, @DefaultValue("") String resource) {
 	}
 }

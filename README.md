@@ -253,6 +253,36 @@ cd ui && npm ci && npm run dev             # hot reload on :5173, proxied to the
 cd ui && npm test                          # UI unit tests
 ```
 
+## MCP: use it from any AI client
+`/mcp` is an MCP server (Streamable HTTP, stateless; ADR-0005). Claude, ChatGPT, Cursor and IDE agents can use it to hand over work and follow it.
+
+| Tool | Role | What it does |
+|---|---|---|
+| `submit_task` | operator | Start a run (title, description, clone URL, host kind, optional base branch and idempotency key). |
+| `list_runs` | viewer | Runs, newest first, optionally filtered by state. |
+| `get_run` | viewer | State, risk, pending gate, usage, a link to the UI, and what happens next. |
+| `get_run_artifact` | viewer | The latest `spec`, `diff`, `review` or `pull-request`. |
+| `get_run_events` | viewer | A page of the event log; pass `afterSeq` to read only what is new. |
+| `cancel_run`, `resume_run` | operator | Stop a run, or continue one that is waiting for a human. |
+
+Gate approvals are not available over MCP. A human approves specs, implementations and pushes in the UI. Tasks submitted over MCP are untrusted, because an assistant may relay text it read elsewhere, so they always stop at the SPEC gate.
+
+**Authentication.** Clients send the user's access token, which needs the same roles as the API.
+- Clients that support MCP OAuth find the identity provider on their own. A 401 points to `/.well-known/oauth-protected-resource`, which names the issuer.
+- Tokens must carry this API's audience. If your IdP sets `aud` to the resource URL (RFC 8707), add `https://<host>/mcp` to `AGENTIC_JWT_AUDIENCE`, comma-separated.
+- Set `agentic.mcp.resource` to the public `/mcp` URL when behind a proxy, and `agentic.mcp.run-link-base` (`https://<host>/#/runs/`) for links.
+
+```bash
+# Claude Code
+claude mcp add --transport http agentic-sdlc https://agentic.example.com/mcp --header "Authorization: Bearer $TOKEN"
+```
+```json
+// Cursor (.cursor/mcp.json) and other clients that take a URL plus headers
+{ "mcpServers": { "agentic-sdlc": { "url": "https://agentic.example.com/mcp",
+    "headers": { "Authorization": "Bearer ${TOKEN}" } } } }
+```
+Claude Desktop and claude.ai: add a custom connector with the `/mcp` URL and sign in through your IdP. Locally, use `scripts/dev-token.sh` for a token, and inspect the server with `npx @modelcontextprotocol/inspector@2.8.0`.
+
 ## Evaluation
 `evals/` explains how to turn merged fixes into a suite. Each case is replayed through the production pipeline with gates auto-approved and nothing pushed, then graded in its sandbox with hidden fail-to-pass and pass-to-pass checks. The report gives pass@1, pass^k, cost and duration, and `--agentic.eval.min-pass-rate` makes it a CI gate for prompt and model changes.
 
@@ -285,3 +315,4 @@ Operations: `/actuator/health/{liveness,readiness}` and `/actuator/prometheus`, 
 | **M6** ✅ | Jira intake (webhook + REST) and status comments |
 | **M7** ✅ | Evaluation harness built from historical tickets |
 | **M8** ✅ | Web UI |
+| **M9** ✅ | MCP server for AI clients |

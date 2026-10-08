@@ -46,6 +46,14 @@ public final class RunQueries {
 		return get(runId).thenMany(store.events(runId, afterSeq, clamp(limit)));
 	}
 
+	/** The newest artifact of a kind ({@code spec}, {@code diff}, {@code review}, {@code pull-request}), if any. */
+	public Mono<RunEvent> latestArtifact(UUID runId, String kind) {
+		return get(runId).then(store.latestEvents(runId, Set.of(RunEventType.ARTIFACT_PRODUCED), 200)
+				.filter(e -> kind.equals(e.payload().get("kind")))
+				.last()
+				.onErrorResume(java.util.NoSuchElementException.class, e -> Mono.empty()));
+	}
+
 	/**
 	 * Every event after {@code afterSeq}, then new ones as they are written, in order and without gaps.
 	 * Completes once the run has reached a terminal state and its final events were delivered.

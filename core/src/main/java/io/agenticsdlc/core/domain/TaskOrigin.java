@@ -7,5 +7,7 @@ public enum TaskOrigin {
 	GITHUB_ISSUE,
 	GITLAB_ISSUE,
 	AZURE_DEVOPS_WORK_ITEM,
-	SLACK
+	SLACK,
+	/** Submitted by an AI client over MCP: it may relay text it read elsewhere, so it is untrusted. */
+	MCP
 }
