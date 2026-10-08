@@ -21,8 +21,9 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      "/api": { target: "http://localhost:8080", changeOrigin: false },
-      "/ui-config.json": { target: "http://localhost:8080" },
+      // API_TARGET points the dev server at another backend, e.g. http://localhost:8082.
+      "/api": { target: process.env.API_TARGET ?? "http://localhost:8080", changeOrigin: false },
+      "/ui-config.json": { target: process.env.API_TARGET ?? "http://localhost:8080" },
     },
   },
   test: {

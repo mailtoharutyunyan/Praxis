@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Api } from "./lib/api";
 import { devSession, loadConfig, localSession, oidcSession, storeLocalToken, type Session, type UiConfig } from "./lib/auth";
 import { getSetup, type SetupStatus } from "./lib/setup";
+import { Icon, Logo } from "./components/Icon";
 import { MemoryPage } from "./pages/MemoryPage";
 import { OnboardingPage } from "./pages/OnboardingPage";
 import { RunPage } from "./pages/RunPage";
@@ -61,11 +62,13 @@ export function App() {
   }, [config, version, bump]);
 
   const api = useMemo(() => (session ? new Api(session.token) : null), [session]);
+  const attention = useAttentionCount(api, Boolean(session?.signedIn && setup?.complete));
 
   if (failure) {
     return (
-      <div className="shell">
-        <div className="card stack">
+      <div className="auth">
+        <div className="auth-card">
+          <Logo />
           <div className="alert error" role="alert"><b>The app could not start.</b> {failure}</div>
           {/* Reload without the query, so a failed sign-in response is not processed again. */}
           <div><button onClick={() => window.location.replace(window.location.pathname + window.location.hash)}>Try again</button></div>
@@ -73,48 +76,96 @@ export function App() {
       </div>
     );
   }
-  if (!session || !api || !setup || !config) return <div className="shell"><p className="muted">Loading…</p></div>;
+  if (!session || !api || !setup || !config) return <div className="auth"><p className="muted">Loading…</p></div>;
 
   const local = config.authMode === "local";
   const adminPending = setup.steps.some((s) => s.id === "admin" && s.state === "PENDING");
   if (local && (adminPending || !session.signedIn)) {
-    return (
-      <div className="shell">
-        <header className="topbar"><span className="brand">Agentic SDLC</span></header>
-        <SignInPage firstRun={adminPending} onSignedIn={(signedIn) => { storeLocalToken(signedIn.token); bump(); }} />
-      </div>
-    );
+    return <SignInPage firstRun={adminPending} onSignedIn={(signedIn) => { storeLocalToken(signedIn.token); bump(); }} />;
   }
   const isAdmin = session.roles.includes("admin");
   const runMatch = path.match(/^\/runs\/([0-9a-f-]{36})$/);
+  const section = path === "/memory" ? "memory" : path === "/settings" ? "settings" : "runs";
+  const nav = setup.complete && session.signedIn ? [
+    { key: "runs", href: "#/", icon: "runs" as const, label: "Runs", count: attention },
+    { key: "memory", href: "#/memory", icon: "memory" as const, label: "Memory", count: 0 },
+    ...(isAdmin ? [{ key: "settings", href: "#/settings", icon: "settings" as const, label: "Settings", count: 0 }] : []),
+  ] : [];
+  const name = session.subject ?? "signed out";
+
   return (
-    <div className="shell">
-      <header className="topbar">
-        <a className="brand" href="#/">Agentic SDLC <span>runs</span></a>
-        <div className="row">
-          {session.signedIn && setup.complete && <a className="small" href="#/memory">Memory</a>}
-          {session.signedIn && setup.complete && isAdmin && <a className="small" href="#/settings">Settings</a>}
-          {session.signedIn && <span className="muted small">{session.subject} · {session.roles.join(", ") || "no roles"}</span>}
-          {session.signedIn
-            ? <button onClick={() => void session.signOut()}>Sign out</button>
-            : <button className="primary" onClick={() => void session.signIn()}>Sign in</button>}
+    <div className="app">
+      <aside className="sidebar">
+        <a className="brand" href="#/"><Logo /><span>Agentic SDLC<small>Agentic delivery</small></span></a>
+        {nav.length > 0 && <div className="nav-label">Workspace</div>}
+        <nav aria-label="Main">
+          {nav.map((item) => (
+            <a key={item.key} className={`nav-item ${section === item.key ? "active" : ""}`} href={item.href}
+              aria-current={section === item.key ? "page" : undefined}>
+              <Icon name={item.icon} />{item.label}
+              {item.count > 0 && <span className="count" title="Runs waiting for you">{item.count}</span>}
+            </a>
+          ))}
+        </nav>
+        <div className="sidebar-foot">
+          {session.signedIn ? (
+            <>
+              <div className="user">
+                <span className="avatar" aria-hidden="true">{name.slice(0, 2).toUpperCase()}</span>
+                <div style={{ minWidth: 0 }}>
+                  <div className="user-name">{name}</div>
+                  <div className="user-roles">{session.roles.join(" · ") || "no roles"}</div>
+                </div>
+              </div>
+              <button className="ghost" onClick={() => void session.signOut()}><Icon name="logout" />Sign out</button>
+            </>
+          ) : <button className="primary" onClick={() => void session.signIn()}>Sign in</button>}
         </div>
+      </aside>
+      <header className="topbar-mobile">
+        <a className="brand" href="#/" style={{ padding: 0 }}><Logo />Agentic SDLC</a>
+        <nav aria-label="Main (compact)">
+          {nav.map((item) => (
+            <a key={item.key} className={`nav-item ${section === item.key ? "active" : ""}`} href={item.href} title={item.label}>
+              <Icon name={item.icon} />
+            </a>
+          ))}
+        </nav>
       </header>
-      {!session.signedIn ? (
-        <div className="card"><p>Sign in to see and approve runs.</p></div>
-      ) : !setup.complete ? (
-        isAdmin
-          ? <OnboardingPage api={api} status={setup} onChanged={setSetup} />
-          : <div className="card"><p>Setup is not finished yet. An admin needs to connect a code host and a model first.</p></div>
-      ) : path === "/settings" && isAdmin ? (
-        <SettingsPage api={api} onChanged={bump} />
-      ) : runMatch ? (
-        <RunPage api={api} id={runMatch[1]} token={session.token} roles={session.roles} />
-      ) : path === "/memory" ? (
-        <MemoryPage api={api} canModerate={session.roles.includes("approver")} />
-      ) : (
-        <RunsPage api={api} canSubmit={session.roles.includes("operator")} navigate={navigate} />
-      )}
+      <main className="main">
+        <div className="content">
+          {!session.signedIn ? (
+            <div className="card empty"><Icon name="shield" /><p>Sign in to see and approve runs.</p></div>
+          ) : !setup.complete ? (
+            isAdmin
+              ? <OnboardingPage api={api} status={setup} onChanged={setSetup} />
+              : <div className="card empty"><Icon name="settings" /><p>Setup is not finished yet. An admin needs to connect a code host and a model first.</p></div>
+          ) : path === "/settings" && isAdmin ? (
+            <SettingsPage api={api} onChanged={bump} />
+          ) : runMatch ? (
+            <RunPage api={api} id={runMatch[1]} token={session.token} roles={session.roles} />
+          ) : path === "/memory" ? (
+            <MemoryPage api={api} canModerate={session.roles.includes("approver")} />
+          ) : (
+            <RunsPage api={api} canSubmit={session.roles.includes("operator")} navigate={navigate} />
+          )}
+        </div>
+      </main>
     </div>
   );
+}
+
+/** How many runs wait for a person (a gate or a human fix); shown next to Runs in the navigation. */
+function useAttentionCount(api: Api | null, enabled: boolean): number {
+  const [count, setCount] = useState(0);
+  useEffect(() => {
+    if (!api || !enabled) return;
+    let current = true;
+    const load = () => api.listRuns(["AWAITING_APPROVAL", "NEEDS_HUMAN"], 100)
+      .then((page) => { if (current) setCount(page.items.length); }, () => undefined);
+    void load();
+    const timer = setInterval(() => void load(), 10000);
+    return () => { current = false; clearInterval(timer); };
+  }, [api, enabled]);
+  return count;
 }

@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import { ApiError, type Api } from "../lib/api";
 import type { Run, ScmKind } from "../lib/types";
+import { Icon } from "./Icon";
 
 const HOSTS: Record<ScmKind, string> = {
   GITHUB: "https://github.com/owner/repo.git",
@@ -43,10 +44,13 @@ export function NewTaskDialog({ api, onCreated }: { api: Api; onCreated: (run: R
 
   return (
     <>
-      <button className="primary" onClick={() => dialog.current?.showModal()}>New task</button>
+      <button className="primary" onClick={() => dialog.current?.showModal()}><Icon name="plus" />New task</button>
       <dialog ref={dialog} aria-label="New task">
         <form className="stack" onSubmit={(e) => { e.preventDefault(); void submit(e.currentTarget); }}>
-          <h2 style={{ margin: 0, fontSize: 17 }}>New task</h2>
+          <div>
+            <h2 style={{ margin: 0, fontSize: 18 }}>New task</h2>
+            <p className="muted small" style={{ margin: "4px 0 0" }}>Describe the change. The agent plans it, implements it in a sandbox and stops at the gates for you.</p>
+          </div>
           <label>Title<input name="title" required maxLength={500} placeholder="Add a /ping endpoint" /></label>
           <label>Description
             <textarea name="description" required placeholder="What should change, acceptance criteria, constraints…" />

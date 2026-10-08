@@ -10,6 +10,8 @@ export function label(state: RunState): string {
   return state.toLowerCase().replace(/_/g, " ");
 }
 
+const LIVE = new Set<RunState>(["TRIAGING", "PREPARING_CONTEXT", "SPECIFYING", "IMPLEMENTING", "VERIFYING", "REVIEWING", "PUBLISHING"]);
+
 export function StateBadge({ state }: { state: RunState }) {
-  return <span className={`badge ${TONE[state]}`}>{label(state)}</span>;
+  return <span className={`badge ${TONE[state]} ${LIVE.has(state) ? "live" : ""}`}>{label(state)}</span>;
 }

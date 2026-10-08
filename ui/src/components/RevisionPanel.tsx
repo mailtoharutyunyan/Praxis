@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { ApiError } from "../lib/api";
+import { Icon } from "./Icon";
 
 /** Ask for changes to the run's open pull request; the agent revises the same branch and a human approves the push. */
 export function RevisionPanel(props: { onRequest: (text: string, location: string) => Promise<void> }) {
@@ -24,7 +25,7 @@ export function RevisionPanel(props: { onRequest: (text: string, location: strin
 
   return (
     <section className="card stack" aria-label="Request changes">
-      <h2 style={{ margin: 0, fontSize: 16 }}>Request changes</h2>
+      <h2 className="card-title" style={{ margin: 0 }}><Icon name="message" />Request changes</h2>
       <p className="muted small" style={{ margin: 0 }}>
         The agent revises the open pull request on the same branch; you approve the push again before it is published.
         Reviewers can also comment on the pull request mentioning the bot.

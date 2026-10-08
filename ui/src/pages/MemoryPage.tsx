@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { ApiError, type Api } from "../lib/api";
 import type { FactStatus, RepoFact } from "../lib/types";
+import { Icon } from "../components/Icon";
 
-const BADGE: Record<FactStatus, string> = { ACTIVE: "ok", CANDIDATE: "warn", DISABLED: "" };
+const BADGE: Record<FactStatus, string> = { ACTIVE: "ok", CANDIDATE: "warn", DISABLED: "neutral" };
 
 /**
  * What agents learned about repositories. Active facts are given to agents in later runs (after their citations are
@@ -37,12 +38,16 @@ export function MemoryPage(props: { api: Api; canModerate: boolean }) {
 
   return (
     <div className="stack">
-      <section className="card stack">
-        <h1 style={{ margin: 0, fontSize: 20 }}>Repository memory</h1>
-        <p className="muted small" style={{ margin: 0 }}>
-          Facts agents saved while working, each citing the code that shows it. Active facts are given to agents in later
-          runs if the cited lines still exist; candidates become active when their run's pull request is merged.
-        </p>
+      <div className="page-head" style={{ marginBottom: 0 }}>
+        <div>
+          <h1>Repository memory</h1>
+          <p>
+            Facts agents saved while working, each citing the code that shows it. Active facts are given to agents in later
+            runs if the cited lines still exist; candidates become active when their run's pull request is merged.
+          </p>
+        </div>
+      </div>
+      <section>
         <form className="row" onSubmit={(e) => { e.preventDefault(); void load(repository); }}>
           <input aria-label="Repository" value={repository} onChange={(e) => setRepository(e.target.value)}
             placeholder="Filter by clone URL, e.g. https://github.com/acme/shop.git" style={{ flex: 1 }} />
@@ -50,7 +55,10 @@ export function MemoryPage(props: { api: Api; canModerate: boolean }) {
         </form>
       </section>
       {error && <div className="alert error" role="alert">{error}</div>}
-      {facts === null ? <p className="muted">Loading…</p> : facts.length === 0 ? <p className="muted">Nothing learned yet.</p> : (
+      {facts === null ? <p className="muted">Loading…</p> : facts.length === 0 ? (
+        <div className="card empty"><Icon name="memory" /><b style={{ color: "var(--text)" }}>Nothing learned yet.</b>
+          <span className="small">Agents save facts about a repository as they work; they appear here.</span></div>
+      ) : (
         facts.map((fact) => (
           <section key={fact.id} className="card stack" style={{ gap: 6 }}>
             <div className="row">

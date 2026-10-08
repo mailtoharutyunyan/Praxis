@@ -1,8 +1,13 @@
 import { useState, type ReactNode } from "react";
 import { ApiError, type Api } from "../lib/api";
+import { Icon, type IconName } from "./Icon";
 import { itemSecretKey, type Connector, type ConnectorField, type ConnectorUpdate, type TestResult } from "../lib/setup";
 
 type Item = Record<string, string>;
+
+export const CONNECTOR_ICONS: Record<string, IconName> = {
+  app: "globe", git: "branch", models: "cpu", jira: "ticket", slack: "slack", webhooks: "link",
+};
 type Values = Record<string, string | Item[]>;
 
 const OPTION_LABELS: Record<string, string> = {
@@ -42,12 +47,13 @@ function message(error: unknown, fallback: string): string {
  * A connector's form, rendered from its definition: fields, list entries (such as code hosts), secrets (write-only:
  * a stored secret shows as set and is kept when left empty), and Test / Save / Skip.
  */
-export function ConnectorForm({ api, connector, onSaved, onSkipped, saveLabel = "Save" }: {
+export function ConnectorForm({ api, connector, onSaved, onSkipped, saveLabel = "Save", describe = true }: {
   api: Api;
   connector: Connector;
   onSaved: (saved: Connector) => void;
   onSkipped?: (skipped: Connector) => void;
   saveLabel?: string;
+  describe?: boolean;
 }) {
   const definition = connector.definition;
   const [values, setValues] = useState<Values>(() => initial(connector));
@@ -109,12 +115,12 @@ export function ConnectorForm({ api, connector, onSaved, onSkipped, saveLabel = 
     const setItem = (index: number, name: string, value: string) =>
       setValue(field.name, items.map((item, i) => (i === index ? { ...item, [name]: value } : item)));
     return (
-      <fieldset key={field.name} className="stack" style={{ border: "1px solid var(--border)", borderRadius: 8, padding: 12 }}>
-        <legend className="small">{field.label}</legend>
+      <fieldset key={field.name} className="stack" style={{ border: "none", padding: 0, gap: 10 }}>
+        <legend className="small" style={{ padding: 0, marginBottom: 2 }}>{field.label}</legend>
         {field.help && <span className="muted small">{field.help}</span>}
         {items.map((item, index) => (
-          <div key={index} className="stack" style={{ borderTop: index ? "1px solid var(--border)" : undefined, paddingTop: index ? 10 : 0 }}>
-            <div className="grid-2">
+          <div key={index} className="list-item">
+            <div className="form-grid">
               {field.itemFields.map((itemField) => {
                 if (itemField.type === "secret") {
                   const key = itemSecretKey(field.name, (item[keyField] ?? "").trim(), itemField.name);
@@ -125,45 +131,47 @@ export function ConnectorForm({ api, connector, onSaved, onSkipped, saveLabel = 
                   `${index}-${itemField.name}`);
               })}
             </div>
-            <div><button type="button" onClick={() => setValue(field.name, items.filter((_, i) => i !== index))}>Remove</button></div>
+            <div className="row"><span className="spacer" />
+              <button type="button" className="ghost" onClick={() => setValue(field.name, items.filter((_, i) => i !== index))}><Icon name="x" />Remove</button>
+            </div>
           </div>
         ))}
-        <div><button type="button" onClick={() => setValue(field.name, [...items, emptyItem(field)])}>Add {field.label.toLowerCase().replace(/s$/, "")}</button></div>
+        <div><button type="button" onClick={() => setValue(field.name, [...items, emptyItem(field)])}><Icon name="plus" />Add {field.label.toLowerCase().replace(/s$/, "")}</button></div>
       </fieldset>
     );
   };
 
   return (
     <form className="stack" aria-label={definition.title} onSubmit={(e) => { e.preventDefault(); void run("save"); }}>
-      <p className="muted" style={{ margin: 0 }}>{definition.description}</p>
-      {definition.fields.map((field) => {
-        if (field.type === "list") return renderList(field);
-        if (field.type === "secret") {
-          return labelled(field, input(field, secrets[field.name] ?? "", (v) => setSecrets((s) => ({ ...s, [field.name]: v })), field.name), field.name);
-        }
-        return labelled(field, input(field, (values[field.name] as string) ?? "", (v) => setValue(field.name, v)), field.name);
-      })}
+      {describe && <p className="muted" style={{ margin: 0 }}>{definition.description}</p>}
+      <div className="form-section">
+        {definition.fields.map((field) => {
+          if (field.type === "list") return renderList(field);
+          if (field.type === "secret") {
+            return labelled(field, input(field, secrets[field.name] ?? "", (v) => setSecrets((s) => ({ ...s, [field.name]: v })), field.name), field.name);
+          }
+          return labelled(field, input(field, (values[field.name] as string) ?? "", (v) => setValue(field.name, v)), field.name);
+        })}
+      </div>
       {Object.keys(connector.webhooks).length > 0 && (
-        <div className="small">
-          <span className="muted">Point the sender at:</span>
-          <dl className="kv">
-            {Object.entries(connector.webhooks).map(([name, url]) => (
-              <div key={name} style={{ display: "contents" }}><dt>{name}</dt><dd><code>{url}</code></dd></div>
-            ))}
-          </dl>
+        <div className="stack" style={{ gap: 6 }}>
+          <span className="small muted">Point the sender at</span>
+          {Object.entries(connector.webhooks).map(([name, url]) => (
+            <div key={name} className="endpoint"><span className="badge plain neutral">{name}</span><code>{url}</code></div>
+          ))}
         </div>
       )}
-      {test && <div className={`alert ${test.ok ? "" : "error"}`} role="status">{test.ok ? "✓ " : "✗ "}{test.message}</div>}
+      {test && <div className={`alert ${test.ok ? "success" : "error"}`} role="status">{test.ok ? "✓ " : "✗ "}{test.message}</div>}
       {error && <div className="alert error" role="alert">{error}</div>}
       <div className="row">
         {definition.testable && (
-          <button type="button" disabled={busy !== null} onClick={() => void run("test")}>{busy === "test" ? "Testing…" : "Test connection"}</button>
+          <button type="button" disabled={busy !== null} onClick={() => void run("test")}><Icon name="spark" />{busy === "test" ? "Testing…" : "Test connection"}</button>
         )}
         <span className="spacer" />
         {!definition.required && onSkipped && (
-          <button type="button" disabled={busy !== null} onClick={() => void run("skip")}>{busy === "skip" ? "Skipping…" : "Skip"}</button>
+          <button type="button" className="ghost" disabled={busy !== null} onClick={() => void run("skip")}>{busy === "skip" ? "Skipping…" : "Skip"}</button>
         )}
-        <button className="primary" type="submit" disabled={busy !== null}>{busy === "save" ? "Saving…" : saveLabel}</button>
+        <button className="primary" type="submit" disabled={busy !== null}><Icon name="check" />{busy === "save" ? "Saving…" : saveLabel}</button>
       </div>
     </form>
   );

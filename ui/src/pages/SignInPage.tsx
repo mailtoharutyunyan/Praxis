@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { ApiError } from "../lib/api";
 import { createAdmin, login, type SignedIn } from "../lib/setup";
+import { Logo } from "../components/Icon";
 
 /** Built-in sign-in; on first start it creates the admin account instead. */
 export function SignInPage({ firstRun, onSignedIn }: { firstRun: boolean; onSignedIn: (signedIn: SignedIn) => void }) {
@@ -27,9 +28,14 @@ export function SignInPage({ firstRun, onSignedIn }: { firstRun: boolean; onSign
   };
 
   return (
-    <div className="card stack" style={{ maxWidth: 420, margin: "48px auto" }}>
-      <h1 style={{ margin: 0, fontSize: 20 }}>{firstRun ? "Create the admin account" : "Sign in"}</h1>
-      {firstRun && <p className="muted" style={{ margin: 0 }}>This account has every role: it sets up connectors, submits tasks and approves runs.</p>}
+    <div className="auth">
+    <div className="auth-card">
+      <Logo />
+      <div>
+        <h1>{firstRun ? "Create the admin account" : "Sign in"}</h1>
+        <p>{firstRun ? "This account has every role: it sets up connectors, submits tasks and approves runs."
+          : "Agentic SDLC turns tasks into reviewed pull requests."}</p>
+      </div>
       <form className="stack" onSubmit={(e) => { e.preventDefault(); void submit(e.currentTarget); }}>
         <label>Username<input name="username" required autoComplete="username" defaultValue={firstRun ? "admin" : ""} /></label>
         <label>Password
@@ -39,10 +45,11 @@ export function SignInPage({ firstRun, onSignedIn }: { firstRun: boolean; onSign
         </label>
         {firstRun && <label>Confirm password<input name="confirm" type="password" required autoComplete="new-password" /></label>}
         {error && <div className="alert error" role="alert">{error}</div>}
-        <button className="primary" type="submit" disabled={busy}>
+        <button className="primary lg" type="submit" disabled={busy}>
           {busy ? "Please wait…" : firstRun ? "Create account" : "Sign in"}
         </button>
       </form>
+    </div>
     </div>
   );
 }

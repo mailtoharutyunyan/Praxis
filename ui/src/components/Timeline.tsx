@@ -1,4 +1,32 @@
 import type { RunEvent } from "../lib/types";
+import { Icon, type IconName } from "./Icon";
+
+/** Events whose text already names who acted. */
+const SELF_NAMED = new Set(["GATE_DECIDED", "AGENT_MESSAGE", "RISK_RAISED"]);
+
+type Tone = "neutral" | "ok" | "warn" | "danger" | "info" | "violet";
+
+/** Marker colour and icon per event, so gates, decisions, errors and pull requests stand out in the feed. */
+function look(event: RunEvent): [Tone, IconName] {
+  const p = event.payload;
+  switch (event.type) {
+    case "RUN_CREATED": return ["info", "play"];
+    case "TRIAGED": return ["violet", "risk"];
+    case "GATE_OPENED": return ["warn", "gate"];
+    case "GATE_DECIDED": return p.decision === "APPROVE" ? ["ok", "check"] : p.decision === "REJECT" ? ["danger", "x"] : ["warn", "message"];
+    case "REVISION_REQUESTED": return ["warn", "message"];
+    case "RISK_RAISED": return ["warn", "risk"];
+    case "AGENT_MESSAGE": return ["violet", "bot"];
+    case "TOOL_CALLED": return ["neutral", "code"];
+    case "TOOL_RESULT": return [p.error ? "danger" : "neutral", "terminal"];
+    case "COMMAND_OUTPUT": return [p.exitCode === 0 && !p.timedOut ? "ok" : "danger", "terminal"];
+    case "ARTIFACT_PRODUCED": return p.kind === "pull-request" ? ["ok", "pr"] : ["info", "file"];
+    case "USAGE_RECORDED": return ["neutral", "cost"];
+    case "STAGE_COMPLETED": return ["neutral", "check"];
+    case "ERROR": return ["danger", "alert"];
+    default: return ["neutral", "arrow"];
+  }
+}
 
 function time(iso: string): string {
   return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
@@ -42,7 +70,7 @@ function Body({ event }: { event: RunEvent }) {
     case "STAGE_COMPLETED":
       return <span className="muted">{text(p.stage).toLowerCase().replace(/_/g, " ")} finished: {text(p.outcome)}</span>;
     case "ERROR":
-      return <span className="badge danger" style={{ whiteSpace: "normal" }}>{text(p.kind)}: {text(p.reason)}</span>;
+      return <span style={{ color: "var(--danger)" }}><b>{text(p.kind)}</b>: {text(p.reason)}</span>;
     default:
       return <span>{event.type}</span>;
   }
@@ -53,12 +81,16 @@ export function Timeline({ events, verbose }: { events: RunEvent[]; verbose: boo
   const shown = verbose ? events : events.filter((e) => !quiet.has(e.type));
   return (
     <div className="timeline" aria-label="timeline">
-      {shown.map((event) => (
-        <div className="event" key={event.seq}>
-          <time dateTime={event.occurredAt}>{time(event.occurredAt)}</time>
-          <div><Body event={event} /> {event.type !== "GATE_DECIDED" && event.actor !== "system" && <span className="actor">· {event.actor}</span>}</div>
-        </div>
-      ))}
+      {shown.map((event) => {
+        const [tone, icon] = look(event);
+        return (
+          <div className={`event tone-${tone}`} key={event.seq}>
+            <span className="marker"><Icon name={icon} /></span>
+            <div className="body"><Body event={event} /> {!SELF_NAMED.has(event.type) && event.actor !== "system" && <span className="actor">· {event.actor}</span>}</div>
+            <time dateTime={event.occurredAt}>{time(event.occurredAt)}</time>
+          </div>
+        );
+      })}
       {shown.length === 0 && <p className="muted">No events yet.</p>}
     </div>
   );

@@ -4,6 +4,7 @@ import type { Run, RunState } from "../lib/types";
 import { NewTaskDialog } from "../components/NewTaskDialog";
 import { ProgressBar } from "../components/ProgressBar";
 import { StateBadge } from "../components/StateBadge";
+import { Icon } from "../components/Icon";
 
 const FILTERS: { key: string; label: string; states: RunState[] }[] = [
   { key: "attention", label: "Needs me", states: ["AWAITING_APPROVAL", "NEEDS_HUMAN"] },
@@ -59,44 +60,72 @@ export function RunsPage({ api, canSubmit, navigate }: { api: Api; canSubmit: bo
     };
   }, [api, filter]);
 
+  const current = FILTERS.find((f) => f.key === filter)!;
   return (
-    <div className="stack">
-      <div className="row">
-        <div className="chips" role="tablist" aria-label="filter">
-          {FILTERS.map((f) => (
-            <button key={f.key} role="tab" aria-selected={filter === f.key} className={`chip ${filter === f.key ? "active" : ""}`}
-              onClick={() => setFilter(f.key)}>{f.label}</button>
-          ))}
+    <div>
+      <div className="page-head">
+        <div>
+          <h1>Runs</h1>
+          <p>Every task the agents work on. Gates wait for you; merging always stays with people.</p>
         </div>
         <span className="spacer" />
         {canSubmit && <NewTaskDialog api={api} onCreated={(run) => navigate(`/runs/${run.id}`)} />}
       </div>
-      {error && <div className="alert error" role="alert">{error}</div>}
-      <div className="card" style={{ padding: 0, overflowX: "auto" }}>
-        <table>
-          <thead>
-            <tr><th>Task</th><th>Repository</th><th>State</th><th>Progress</th><th>Risk</th><th>Cost</th><th>Created</th></tr>
-          </thead>
-          <tbody>
-            {runs.map((run) => (
-              <tr key={run.id} className="clickable" onClick={() => navigate(`/runs/${run.id}`)}>
-                <td>
-                  <div style={{ fontWeight: 600 }}>{run.task.externalRef ? `${run.task.externalRef} · ` : ""}{run.task.title}</div>
-                  <div className="muted small">{run.task.requestedBy}</div>
-                </td>
-                <td className="small">{repoName(run.task.cloneUrl)}</td>
-                <td><StateBadge state={run.state} />{run.pendingGate && <div className="muted small">{run.pendingGate} gate</div>}</td>
-                <td>{run.progress && <ProgressBar progress={run.progress} compact />}</td>
-                <td className="small">{run.risk ?? "—"}</td>
-                <td className="small">${run.usage.costUsd.toFixed(2)}</td>
-                <td className="small muted">{ago(run.createdAt)}</td>
-              </tr>
+      <div className="stack">
+        <div className="row">
+          <div className="chips" role="tablist" aria-label="filter">
+            {FILTERS.map((f) => (
+              <button key={f.key} role="tab" aria-selected={filter === f.key} className={`chip ${filter === f.key ? "active" : ""}`}
+                onClick={() => setFilter(f.key)}>{f.label}</button>
             ))}
-            {runs.length === 0 && (
-              <tr><td colSpan={6} className="muted" style={{ textAlign: "center", padding: 32 }}>Nothing here.</td></tr>
-            )}
-          </tbody>
-        </table>
+          </div>
+          <span className="spacer" />
+          <span className="muted small">{runs.length} {runs.length === 1 ? "run" : "runs"}</span>
+        </div>
+        {error && <div className="alert error" role="alert">{error}</div>}
+        <div className="card table-card">
+          <div className="table-scroll">
+            <table className="runs-table">
+              <thead>
+                <tr><th>Task</th><th>Status</th><th style={{ width: 240 }}>Progress</th><th>Risk</th><th style={{ textAlign: "right" }}>Cost</th></tr>
+              </thead>
+              <tbody>
+                {runs.map((run) => (
+                  <tr key={run.id} className="clickable" onClick={() => navigate(`/runs/${run.id}`)}>
+                    <td>
+                      <div className="run-title">
+                        {run.task.externalRef && <span className="ref">{run.task.externalRef}</span>}
+                        {run.task.title}
+                        {run.task.trust === "UNTRUSTED" && <span title="Text from an external system"><Icon name="shield" /></span>}
+                      </div>
+                      <div className="run-meta">
+                        <span><Icon name="repo" />{repoName(run.task.cloneUrl)}</span>
+                        <span><Icon name="user" />{run.task.requestedBy}</span>
+                        <span><Icon name="clock" />{ago(run.createdAt)}</span>
+                      </div>
+                    </td>
+                    <td>
+                      <StateBadge state={run.state} />
+                      {run.pendingGate && <div className="muted small" style={{ marginTop: 4 }}>{run.pendingGate} gate</div>}
+                    </td>
+                    <td>{run.progress && <ProgressBar progress={run.progress} compact />}</td>
+                    <td>{run.risk ? <span className={`risk ${run.risk}`}>{run.risk}</span> : <span className="muted">—</span>}</td>
+                    <td className="small" style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>${run.usage.costUsd.toFixed(2)}</td>
+                  </tr>
+                ))}
+                {runs.length === 0 && (
+                  <tr><td colSpan={5}>
+                    <div className="empty">
+                      <Icon name="inbox" />
+                      <div><b style={{ color: "var(--text)" }}>Nothing here.</b></div>
+                      <div className="small">{current.key === "attention" ? "No run is waiting for you." : "No runs match this filter."}</div>
+                    </div>
+                  </td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
       </div>
     </div>
   );

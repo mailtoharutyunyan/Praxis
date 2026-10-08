@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { ApiError } from "../lib/api";
 import type { GateDecision, Run, RunEvent } from "../lib/types";
 import { DiffView } from "./DiffView";
+import { Icon } from "./Icon";
 import { Markdown } from "./Markdown";
 
 type Tab = "spec" | "critique" | "tests" | "diff" | "scan" | "review";
@@ -55,13 +56,16 @@ export function ApprovalPanel(props: {
   };
 
   return (
-    <section className="card stack" aria-label="approval">
-      <div>
-        <h2 style={{ margin: 0, fontSize: 16 }}>Waiting for approval: {run.pendingGate} gate</h2>
-        <p className="muted small" style={{ margin: "4px 0 0" }}>{WHAT[run.pendingGate ?? ""]}</p>
+    <section className="card approval" aria-label="approval">
+      <div className="approval-head">
+        <Icon name="gate" />
+        <div>
+          <h2>Waiting for approval: {run.pendingGate} gate</h2>
+          <p>{WHAT[run.pendingGate ?? ""]}</p>
+        </div>
       </div>
       {tabs.length > 0 && (
-        <div>
+        <div className="approval-body">
           <div className="tabs" role="tablist">
             {tabs.map(([key, title]) => (
               <button key={key} role="tab" aria-selected={tab === key} className={`tab ${tab === key ? "active" : ""}`}
@@ -107,21 +111,21 @@ export function ApprovalPanel(props: {
         </div>
       )}
       {canApprove ? (
-        <div className="stack" style={{ gap: 8 }}>
+        <div className="decision-bar">
           <label>Comment (sent to the agent when you request changes)
             <textarea value={comment} onChange={(e) => setComment(e.target.value)} placeholder="Optional" />
           </label>
           {error && <div className="alert error" role="alert">{error}</div>}
           <div className="row">
-            <button className="primary" disabled={busy} onClick={() => decide("APPROVE")}>Approve</button>
+            <button className="primary lg" disabled={busy} onClick={() => decide("APPROVE")}><Icon name="check" />Approve</button>
             <button disabled={busy || !comment.trim()} onClick={() => decide("REQUEST_CHANGES")}
               title={comment.trim() ? "" : "Write what should change"}>Request changes</button>
             <span className="spacer" />
-            <button className="danger" disabled={busy} onClick={() => decide("REJECT")}>Reject</button>
+            <button className="danger" disabled={busy} onClick={() => decide("REJECT")}><Icon name="x" />Reject</button>
           </div>
         </div>
       ) : (
-        <p className="muted small">You need the approver role to decide this gate.</p>
+        <p className="muted small decision-bar" style={{ margin: 0 }}>You need the approver role to decide this gate.</p>
       )}
     </section>
   );

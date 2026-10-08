@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { ConnectorForm } from "../components/ConnectorForm";
+import { CONNECTOR_ICONS, ConnectorForm } from "../components/ConnectorForm";
+import { Icon } from "../components/Icon";
 import { ApiError, type Api } from "../lib/api";
 import type { Connector } from "../lib/setup";
 
@@ -25,23 +26,36 @@ export function SettingsPage({ api, onChanged }: { api: Api; onChanged: () => vo
   if (error) return <div className="alert error" role="alert">{error}</div>;
   if (!connectors) return <p className="muted">Loading…</p>;
   return (
-    <div className="stack">
-      <h1 style={{ margin: 0, fontSize: 20 }}>Settings</h1>
-      {connectors.map((connector) => (
-        <div className="card stack" key={connector.definition.id}>
-          <div className="row">
-            <b>{connector.definition.title}</b>
-            <span className={`badge ${STATUS_BADGE[connector.status]}`}>{connector.status.toLowerCase()}</span>
-            <span className="spacer" />
-            <button type="button" onClick={() => setOpen(open === connector.definition.id ? null : connector.definition.id)}>
-              {open === connector.definition.id ? "Close" : "Edit"}
-            </button>
-          </div>
-          {open === connector.definition.id && (
-            <ConnectorForm api={api} connector={connector} onSaved={replace} onSkipped={replace} />
-          )}
+    <div>
+      <div className="page-head">
+        <div>
+          <h1>Settings</h1>
+          <p>Connectors for code hosts, models and the tools runs start from. Secrets are encrypted and never shown again.</p>
         </div>
-      ))}
+      </div>
+      <div className="connector-grid">
+        {connectors.map((connector) => {
+          const isOpen = open === connector.definition.id;
+          return (
+            <section className={`card connector ${isOpen ? "open" : ""}`} key={connector.definition.id} aria-label={`${connector.definition.title} connector`}>
+              <div className="connector-head">
+                <span className="connector-icon"><Icon name={CONNECTOR_ICONS[connector.definition.id] ?? "link"} /></span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div className="row">
+                    <h2>{connector.definition.title}</h2>
+                    <span className={`badge ${STATUS_BADGE[connector.status]}`}>{connector.status.toLowerCase()}</span>
+                  </div>
+                  <p>{connector.definition.description}</p>
+                </div>
+                <button type="button" onClick={() => setOpen(isOpen ? null : connector.definition.id)}>
+                  {isOpen ? "Close" : connector.status === "CONFIGURED" ? "Edit" : "Set up"}
+                </button>
+              </div>
+              {isOpen && <ConnectorForm api={api} connector={connector} onSaved={replace} onSkipped={replace} describe={false} />}
+            </section>
+          );
+        })}
+      </div>
     </div>
   );
 }

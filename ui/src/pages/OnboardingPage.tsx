@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { ConnectorForm } from "../components/ConnectorForm";
+import { CONNECTOR_ICONS, ConnectorForm } from "../components/ConnectorForm";
+import { Icon } from "../components/Icon";
 import { ApiError, type Api } from "../lib/api";
 import { getSetup, type Connector, type SetupStatus } from "../lib/setup";
 
@@ -36,36 +37,50 @@ export function OnboardingPage({ api, status, onChanged }: { api: Api; status: S
   const connector = connectors.find((c) => c.definition.id === current);
   const done = steps.filter((s) => s.state !== "PENDING").length;
 
+  const percent = Math.round((done / Math.max(steps.length, 1)) * 100);
   return (
-    <div className="stack">
-      <div className="card stack">
-        <h1 style={{ margin: 0, fontSize: 20 }}>Set up Agentic SDLC</h1>
-        <p className="muted" style={{ margin: 0 }}>
-          Connect a code host and a model to start. Jira, Slack and pull request feedback are optional; skip them now and add them later in Settings.
-        </p>
-        <div className="progress active" aria-label="Setup progress">
-          <div className="progress-head"><span>{done} of {steps.length} steps</span><span>{Math.round((done / Math.max(steps.length, 1)) * 100)}%</span></div>
-          <div className="progress-track"><div className="progress-fill" style={{ width: `${(done / Math.max(steps.length, 1)) * 100}%` }} /></div>
+    <div>
+      <div className="page-head">
+        <div>
+          <h1>Set up Agentic SDLC</h1>
+          <p>Connect a code host and a model to start. Jira, Slack and pull request feedback are optional; skip them now and add them later in Settings.</p>
         </div>
-        <nav className="pipeline" aria-label="Setup steps">
-          {steps.map((step) => (
-            <button key={step.id} type="button" className={`step ${step.state !== "PENDING" ? "done" : ""} ${step.id === current ? "current" : ""}`}
-              onClick={() => setCurrent(step.id)} aria-current={step.id === current ? "step" : undefined}>
-              {step.title}{step.required ? " *" : ""} · {STATE_LABEL[step.state]}
-            </button>
-          ))}
-        </nav>
       </div>
-      {connector && (
-        <div className="card stack" key={connector.definition.id}>
-          <h2 style={{ margin: 0, fontSize: 17 }}>{connector.definition.title}{connector.definition.required ? "" : " (optional)"}</h2>
-          <ConnectorForm api={api} connector={connector} saveLabel="Save and continue"
-            onSaved={(saved) => void advance(saved)} onSkipped={(skipped) => void advance(skipped)} />
+      <div className="setup">
+        <aside className="card stack" style={{ padding: 12, gap: 8 }}>
+          <div className="progress ok" aria-label="Setup progress" style={{ padding: "6px 8px" }}>
+            <div className="progress-head"><span className="small">{done} of {steps.length} steps</span><b>{percent}%</b></div>
+            <div className="progress-track"><div className="progress-fill" style={{ width: `${percent}%` }} /></div>
+          </div>
+          <nav className="setup-steps" aria-label="Setup steps" style={{ padding: 0 }}>
+            {steps.map((step, i) => (
+              <button key={step.id} type="button" className={`setup-step ${step.state === "DONE" ? "done" : step.state === "SKIPPED" ? "skipped" : ""}`}
+                onClick={() => setCurrent(step.id)} aria-current={step.id === current ? "step" : undefined}>
+                <span className="num">{step.state === "DONE" ? <Icon name="check" /> : i + 1}</span>
+                <span>{step.title}<small>{step.required ? "Required" : "Optional"} · {STATE_LABEL[step.state]}</small></span>
+              </button>
+            ))}
+          </nav>
+        </aside>
+        <div className="stack">
+          {status.complete && (
+            <div className="callout ok" role="status"><Icon name="check" /><div><b>Setup is complete.</b> <a href="#/">Go to runs</a></div></div>
+          )}
+          {connector && (
+            <section className="card stack" key={connector.definition.id}>
+              <div className="connector-head">
+                <span className="connector-icon"><Icon name={CONNECTOR_ICONS[connector.definition.id] ?? "link"} /></span>
+                <div>
+                  <h2>{connector.definition.title}{connector.definition.required ? "" : " (optional)"}</h2>
+                  <p>{connector.definition.required ? "Required to start runs." : "You can skip this and add it later in Settings."}</p>
+                </div>
+              </div>
+              <ConnectorForm api={api} connector={connector} saveLabel="Save and continue"
+                onSaved={(saved) => void advance(saved)} onSkipped={(skipped) => void advance(skipped)} />
+            </section>
+          )}
         </div>
-      )}
-      {status.complete && (
-        <div className="alert" role="status">Setup is complete. <a href="#/">Go to runs</a></div>
-      )}
+      </div>
     </div>
   );
 }
