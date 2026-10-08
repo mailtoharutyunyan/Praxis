@@ -1,0 +1,29 @@
+spring:
+  application:
+    name: agentic-sdlc
+  threads:
+    virtual:
+      enabled: true
+  lifecycle:
+    timeout-per-shutdown-phase: 30s
+  docker:
+    compose:
+      # Dev-only: the module is excluded from the packaged jar. Path is relative to the app/ module.
+      file: ../compose.yaml
+      lifecycle-management: start-only
+
+server:
+  shutdown: graceful
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+  observations:
+    key-values:
+      application: agentic-sdlc
