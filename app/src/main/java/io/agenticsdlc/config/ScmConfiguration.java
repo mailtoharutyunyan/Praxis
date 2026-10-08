@@ -2,6 +2,7 @@ package io.agenticsdlc.config;
 
 import io.agenticsdlc.adapter.out.scm.ScmHttp;
 import io.agenticsdlc.adapter.out.scm.ScmPullRequests;
+import io.agenticsdlc.config.connectors.ConnectorSettings;
 import io.agenticsdlc.core.application.RunCommands;
 import io.agenticsdlc.core.memory.RepoMemory;
 import io.agenticsdlc.core.port.RunStore;
@@ -26,10 +27,9 @@ class ScmConfiguration {
 	private static final Logger log = LoggerFactory.getLogger(ScmConfiguration.class);
 
 	@Bean
-	ScmPullRequests pullRequests(WebClient.Builder webClient, AgenticProperties properties) {
-		AgenticProperties.Scm scm = properties.scm();
-		return new ScmPullRequests(new ScmHttp(webClient, scm.tokens(), scm.apiUrls(), java.time.Duration.ofSeconds(30)),
-				scm.draftPullRequests());
+	ScmPullRequests pullRequests(WebClient.Builder webClient, AgenticProperties properties, ConnectorSettings connectors) {
+		return new ScmPullRequests(new ScmHttp(webClient, connectors::scmToken, connectors::scmApiUrl,
+				java.time.Duration.ofSeconds(30)), properties.scm().draftPullRequests());
 	}
 
 	@Bean
@@ -39,10 +39,10 @@ class ScmConfiguration {
 
 	@Bean
 	PullRequestFeedback pullRequestFeedback(RunStore store, RunCommands commands, PullRequests pullRequests,
-			AgenticProperties properties) {
+			AgenticProperties properties, ConnectorSettings connectors) {
 		AgenticProperties.Feedback feedback = properties.scm().feedback();
-		return new PullRequestFeedback(store, commands, pullRequests, feedback.mention(), feedback.maxCiFixes(),
-				feedback.runLinkBase());
+		return new PullRequestFeedback(store, commands, pullRequests, () -> connectors.feedback().mention(),
+				feedback.maxCiFixes(), () -> connectors.runLinkBase(feedback.runLinkBase()));
 	}
 
 	@Bean

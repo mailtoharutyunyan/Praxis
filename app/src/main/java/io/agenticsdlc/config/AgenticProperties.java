@@ -57,9 +57,28 @@ public record AgenticProperties(@Valid @NotNull Worker worker, @Valid @NotNull L
 	 * @param rolesClaim JWT claim holding the user's roles; dotted paths reach nested claims
 	 *        (Keycloak: {@code realm_access.roles})
 	 * @param corsAllowedOrigins browser origins allowed to call the API (the future web UI)
+	 * @param mode {@code oidc} (tokens from your identity provider) or {@code local} (built-in sign-in with
+	 *        usernames and passwords, for installs without one; ADR-0007)
+	 * @param secretsKey base64 of 32 random bytes encrypting stored secrets; empty generates a key file in
+	 *        {@code dataDir} (local installs only)
+	 * @param dataDir where generated keys live; empty for {@code ~/.agentic-sdlc/data}
+	 * @param localTokenTtl how long a local sign-in lasts
 	 */
 	public record Security(@DefaultValue("roles") @NotBlank String rolesClaim,
-			@DefaultValue({}) List<String> corsAllowedOrigins) {
+			@DefaultValue({}) List<String> corsAllowedOrigins,
+			@DefaultValue("oidc") @jakarta.validation.constraints.Pattern(regexp = "oidc|local") String mode,
+			@DefaultValue("") String secretsKey,
+			@DefaultValue("") String dataDir,
+			@DefaultValue("12h") @NotNull Duration localTokenTtl) {
+
+		public java.nio.file.Path dataPath() {
+			return dataDir.isBlank() ? java.nio.file.Path.of(System.getProperty("user.home"), ".agentic-sdlc", "data")
+					: java.nio.file.Path.of(dataDir);
+		}
+
+		public boolean local() {
+			return "local".equals(mode);
+		}
 	}
 
 	/**

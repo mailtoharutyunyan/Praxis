@@ -54,9 +54,10 @@ class WorkspaceConfiguration {
 
 	/** Also the {@code ChangePublisher}: the same host-side git setup clones and pushes. */
 	@Bean
-	JGitRepositoryCheckout repositoryCheckout(WorkspacePaths paths, AgenticProperties properties) {
+	JGitRepositoryCheckout repositoryCheckout(WorkspacePaths paths, AgenticProperties properties,
+			io.agenticsdlc.config.connectors.ConnectorSettings connectors) {
 		AgenticProperties.Scm scm = properties.scm();
-		return new JGitRepositoryCheckout(paths, scm.tokens(), scm.mirrors(), scm.cloneDepth(), scm.authorName(),
+		return new JGitRepositoryCheckout(paths, connectors::scmToken, scm.mirrors(), scm.cloneDepth(), scm.authorName(),
 				scm.authorEmail());
 	}
 

@@ -2,6 +2,8 @@ package io.agenticsdlc.adapter.out.scm;
 
 import java.time.Duration;
 import java.util.Map;
+import java.util.Optional;
+import java.util.function.Function;
 import java.util.function.Consumer;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatusCode;
@@ -19,26 +21,37 @@ import tools.jackson.databind.JsonNode;
 public class ScmHttp {
 
 	private final WebClient client;
-	private final Map<String, String> tokensByHost;
-	private final Map<String, String> apiUrlsByHost;
+	private final Function<String, Optional<String>> tokens;
+	private final Function<String, Optional<String>> apiUrls;
 	private final Duration timeout;
 
 	public ScmHttp(WebClient.Builder builder, Map<String, String> tokensByHost, Map<String, String> apiUrlsByHost,
 			Duration timeout) {
+		this(builder, lookup(tokensByHost), lookup(apiUrlsByHost), timeout);
+	}
+
+	/** Tokens and API bases looked up per request, so ones changed at runtime apply to the next call. */
+	public ScmHttp(WebClient.Builder builder, Function<String, Optional<String>> tokens,
+			Function<String, Optional<String>> apiUrls, Duration timeout) {
 		this.client = builder.build();
-		this.tokensByHost = Map.copyOf(tokensByHost);
-		this.apiUrlsByHost = Map.copyOf(apiUrlsByHost);
+		this.tokens = tokens;
+		this.apiUrls = apiUrls;
 		this.timeout = timeout;
+	}
+
+	private static Function<String, Optional<String>> lookup(Map<String, String> byHost) {
+		Map<String, String> copy = Map.copyOf(byHost);
+		return host -> Optional.ofNullable(copy.get(host));
 	}
 
 	/** The configured API base for a host, else the provider default. Never ends with a slash. */
 	String apiBase(String host, String defaultBase) {
-		String base = apiUrlsByHost.getOrDefault(host, defaultBase);
+		String base = apiUrls.apply(host).filter(u -> !u.isBlank()).orElse(defaultBase);
 		return base.endsWith("/") ? base.substring(0, base.length() - 1) : base;
 	}
 
 	String token(String host) {
-		String token = tokensByHost.get(host);
+		String token = tokens.apply(host).orElse(null);
 		if (token == null || token.isBlank()) {
 			throw new IllegalStateException("no SCM token configured for " + host + " (agentic.scm.tokens.[" + host + "])");
 		}

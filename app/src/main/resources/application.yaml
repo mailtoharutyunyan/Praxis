@@ -85,6 +85,9 @@ agentic:
   security:
     roles-claim: roles
     cors-allowed-origins: []
+    mode: ${AGENTIC_SECURITY_MODE:oidc}
+    secrets-key: ${AGENTIC_SECRETS_KEY:}
+    data-dir: ${AGENTIC_DATA_DIR:}
   events:
     fallback-poll: 5s
     keep-alive: 15s

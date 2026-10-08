@@ -17,7 +17,7 @@ class UiConfigController {
 	UiConfigController(AgenticProperties properties) {
 		AgenticProperties.Ui ui = properties.ui();
 		Map<String, Object> values = new LinkedHashMap<>();
-		values.put("authMode", ui.authMode());
+		values.put("authMode", properties.security().local() ? "local" : ui.authMode());
 		values.put("issuer", ui.issuer());
 		values.put("clientId", ui.clientId());
 		values.put("scope", ui.scope());

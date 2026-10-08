@@ -22,8 +22,10 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.Function;
 import java.util.stream.Stream;
 import org.eclipse.jgit.api.CloneCommand;
 import org.eclipse.jgit.api.Git;
@@ -75,7 +77,7 @@ public class JGitRepositoryCheckout implements RepositoryCheckout, ChangePublish
 	private static final int MAX_FILES = 50_000;
 
 	private final WorkspacePaths paths;
-	private final Map<String, String> tokensByHost;
+	private final Function<String, Optional<String>> tokens;
 	private final Map<String, String> mirrors;
 	private final int cloneDepth;
 	private final PersonIdent author;
@@ -87,8 +89,14 @@ public class JGitRepositoryCheckout implements RepositoryCheckout, ChangePublish
 
 	public JGitRepositoryCheckout(WorkspacePaths paths, Map<String, String> tokensByHost, Map<String, String> mirrors,
 			int cloneDepth, String authorName, String authorEmail) {
+		this(paths, tokenLookup(tokensByHost), mirrors, cloneDepth, authorName, authorEmail);
+	}
+
+	/** Tokens looked up per clone or push, so ones changed at runtime apply to the next operation. */
+	public JGitRepositoryCheckout(WorkspacePaths paths, Function<String, Optional<String>> tokens,
+			Map<String, String> mirrors, int cloneDepth, String authorName, String authorEmail) {
 		this.paths = paths;
-		this.tokensByHost = Map.copyOf(tokensByHost);
+		this.tokens = tokens;
 		this.mirrors = Map.copyOf(mirrors);
 		this.cloneDepth = cloneDepth;
 		this.author = new PersonIdent(authorName, authorEmail);
@@ -403,9 +411,14 @@ public class JGitRepositoryCheckout implements RepositoryCheckout, ChangePublish
 				.orElse(url);
 	}
 
+	private static Function<String, Optional<String>> tokenLookup(Map<String, String> byHost) {
+		Map<String, String> copy = Map.copyOf(byHost);
+		return host -> Optional.ofNullable(copy.get(host));
+	}
+
 	private CredentialsProvider credentials(ScmKind kind, String url) {
 		String host = java.net.URI.create(url).getHost();
-		String token = host == null ? null : tokensByHost.get(host);
+		String token = host == null ? null : tokens.apply(host).orElse(null);
 		if (token == null || token.isBlank()) {
 			return null;
 		}

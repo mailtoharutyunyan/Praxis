@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.agenticsdlc.config.AgenticProperties;
 import io.agenticsdlc.core.agent.AgentMessage;
+import io.agenticsdlc.core.agent.AgentModel;
 import io.agenticsdlc.core.agent.AgentRole;
 import io.agenticsdlc.core.agent.ModelReply;
 import io.agenticsdlc.core.agent.ModelRequest;
@@ -192,6 +193,36 @@ class SpringAiAgentModelTest {
 		assertThat(registry.forRole(AgentRole.CODER)).isSameAs(registry.forRole(AgentRole.CODER));
 		assertThatThrownBy(() -> registry.forRole(AgentRole.TRIAGE)).hasMessageContaining("no model configured");
 		assertThatThrownBy(() -> registry.forRole(AgentRole.PLANNER)).hasMessageContaining("unknown provider");
+	}
+
+	@Test
+	void aModelChosenAtRuntimeServesEveryRoleAndIsRebuiltWhenItChanges() {
+		AgenticProperties.Models models = new AgenticProperties.Models(Map.of(),
+				Map.of("coder", new AgenticProperties.RoleModel("anthropic", "claude-opus-5-5", 8000, "high")), Map.of());
+		java.util.concurrent.atomic.AtomicLong version = new java.util.concurrent.atomic.AtomicLong(1);
+		java.util.concurrent.atomic.AtomicReference<String> model = new java.util.concurrent.atomic.AtomicReference<>("qwen3");
+		ModelOverride override = new ModelOverride() {
+			@Override
+			public long version() {
+				return version.get();
+			}
+
+			@Override
+			public java.util.Optional<Choice> current() {
+				return java.util.Optional.of(new Choice(new AgenticProperties.Provider("ollama", "", "", "", ""),
+						model.get()));
+			}
+		};
+		SpringAiAgentModels registry = new SpringAiAgentModels(properties(models), JsonMapper.builder().build(), override);
+
+		assertThat(registry.forRole(AgentRole.TRIAGE).id()).isEqualTo("ollama/qwen3");
+		AgentModel coder = registry.forRole(AgentRole.CODER);
+		assertThat(coder.id()).isEqualTo("ollama/qwen3");
+		assertThat(registry.forRole(AgentRole.CODER)).isSameAs(coder);
+
+		model.set("llama4");
+		version.incrementAndGet();
+		assertThat(registry.forRole(AgentRole.CODER).id()).isEqualTo("ollama/llama4");
 	}
 
 	@Test

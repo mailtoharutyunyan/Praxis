@@ -48,16 +48,23 @@ class RunTools {
 	private final TaskIntake intake;
 	private final RunQueries queries;
 	private final RunCommands commands;
-	private final String runLinkBase;
+	private final String configuredLinkBase;
+	private final io.agenticsdlc.config.connectors.ConnectorSettings connectors;
 	private final RepoMemory memory;
 
 	RunTools(TaskIntake intake, RunQueries queries, RunCommands commands, AgenticProperties properties,
-			RepoMemory memory) {
+			RepoMemory memory, io.agenticsdlc.config.connectors.ConnectorSettings connectors) {
 		this.memory = memory;
 		this.intake = intake;
 		this.queries = queries;
 		this.commands = commands;
-		this.runLinkBase = properties.mcp().runLinkBase();
+		this.configuredLinkBase = properties.mcp().runLinkBase();
+		this.connectors = connectors;
+	}
+
+	/** The configured prefix, else one derived from the public URL set in the UI. */
+	private String runLinkBase() {
+		return connectors.runLinkBase(configuredLinkBase);
 	}
 
 	record RunSummary(String id, String state, String pendingGate, String risk, String title, String repository,
@@ -247,7 +254,7 @@ class RunTools {
 				run.risk() == null ? null : run.risk().name(), view.task().title(),
 				view.task().repository().cloneUrl().toString(), view.task().trust().name(), view.task().requestedBy(),
 				run.usage().totalTokens(), run.usage().costMicroUsd() / 1_000_000.0, run.createdAt().toString(),
-				run.updatedAt().toString(), runLinkBase.isBlank() ? null : runLinkBase + id, next(run), progress.percent(),
+				run.updatedAt().toString(), runLinkBase().isBlank() ? null : runLinkBase() + id, next(run), progress.percent(),
 				progress.phase(), progress.activity());
 	}
 

@@ -37,8 +37,8 @@ class CoreConfiguration {
 	}
 
 	@Bean
-	RepositoryPolicy repositoryPolicy(AgenticProperties properties) {
-		return new RepositoryPolicy(Set.copyOf(properties.scm().allowedHosts()));
+	RepositoryPolicy repositoryPolicy(io.agenticsdlc.config.connectors.ConnectorSettings connectors) {
+		return new RepositoryPolicy(connectors::allowedHosts);
 	}
 
 	@Bean

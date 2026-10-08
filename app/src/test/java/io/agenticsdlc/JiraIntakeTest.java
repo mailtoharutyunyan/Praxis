@@ -5,7 +5,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import io.agenticsdlc.core.application.RunQueries;
 import io.agenticsdlc.core.domain.TaskOrigin;
 import io.agenticsdlc.core.domain.Trust;
-import io.agenticsdlc.core.intake.TicketUpdates;
 import io.agenticsdlc.support.FakeScmServer;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
@@ -73,7 +72,7 @@ class JiraIntakeTest {
 	RunQueries queries;
 
 	@Autowired
-	TicketUpdates updates;
+	io.agenticsdlc.config.JiraRuntime jira;
 
 	private WebTestClient client() {
 		return WebTestClient.bindToApplicationContext(context).configureClient().responseTimeout(Duration.ofSeconds(20))
@@ -129,7 +128,7 @@ class JiraIntakeTest {
 		while (queries.get(runId).block().run().pendingGate() == null && System.currentTimeMillis() < deadline) {
 			Thread.sleep(50);
 		}
-		updates.sweep().blockLast();
+		jira.current().orElseThrow().updates().sweep().blockLast();
 		var comments = JIRA.requests.stream().filter(r -> r.method().equals("POST")).toList();
 		assertThat(comments).isNotEmpty();
 		assertThat(comments).allSatisfy(c -> assertThat(c.uri()).isEqualTo("/rest/api/3/issue/SHOP-9/comment"));
@@ -137,7 +136,7 @@ class JiraIntakeTest {
 		assertThat(all).contains("started work on this issue", "waiting for approval at the SPEC gate",
 				"https://agentic.example.com/runs/" + runId);
 		int before = comments.size();
-		updates.sweep().blockLast();
+		jira.current().orElseThrow().updates().sweep().blockLast();
 		assertThat(JIRA.requests.stream().filter(r -> r.method().equals("POST")).count()).isEqualTo(before);
 	}
 

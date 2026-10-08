@@ -1,6 +1,6 @@
 package io.agenticsdlc.adapter.in.web;
 
-import io.agenticsdlc.config.AgenticProperties;
+import io.agenticsdlc.config.connectors.ConnectorSettings;
 import io.agenticsdlc.core.scm.PullRequestFeedback;
 import io.agenticsdlc.core.scm.PullRequestFeedback.CiFailure;
 import io.agenticsdlc.core.scm.PullRequestFeedback.Comment;
@@ -35,12 +35,12 @@ class ScmWebhookController {
 	private static final Logger log = LoggerFactory.getLogger(ScmWebhookController.class);
 
 	private final ObjectProvider<PullRequestFeedback> feedback;
-	private final AgenticProperties.Feedback settings;
+	private final ConnectorSettings settings;
 	private final JsonMapper json;
 
-	ScmWebhookController(ObjectProvider<PullRequestFeedback> feedback, AgenticProperties properties, JsonMapper json) {
+	ScmWebhookController(ObjectProvider<PullRequestFeedback> feedback, ConnectorSettings settings, JsonMapper json) {
 		this.feedback = feedback;
-		this.settings = properties.scm().feedback();
+		this.settings = settings;
 		this.json = json;
 	}
 
@@ -48,7 +48,7 @@ class ScmWebhookController {
 	Mono<ResponseEntity<Map<String, Object>>> github(@RequestBody byte[] body,
 			@RequestHeader(name = "X-Hub-Signature-256", required = false) String signature,
 			@RequestHeader(name = "X-GitHub-Event", required = false) String event) {
-		if (!WebhookSignatures.validHubSignature(signature, body, settings.githubSecret())) {
+		if (!WebhookSignatures.validHubSignature(signature, body, settings.feedback().githubSecret())) {
 			return unauthorized();
 		}
 		JsonNode payload = json.readTree(body);
@@ -84,7 +84,7 @@ class ScmWebhookController {
 	Mono<ResponseEntity<Map<String, Object>>> gitlab(@RequestBody byte[] body,
 			@RequestHeader(name = "X-Gitlab-Token", required = false) String token,
 			@RequestHeader(name = "X-Gitlab-Event", required = false) String event) {
-		if (!WebhookSignatures.validToken(token, settings.gitlabToken())) {
+		if (!WebhookSignatures.validToken(token, settings.feedback().gitlabToken())) {
 			return unauthorized();
 		}
 		JsonNode payload = json.readTree(body);

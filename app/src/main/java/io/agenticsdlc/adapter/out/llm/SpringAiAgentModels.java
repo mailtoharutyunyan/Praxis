@@ -26,8 +26,21 @@ class SpringAiAgentModels implements AgentModels {
 	private final SpringAiAgentModel.CallPolicy policy;
 	private final JsonMapper json;
 	private final Map<AgentRole, AgentModel> cache = new EnumMap<>(AgentRole.class);
+	private final ModelOverride override;
+	private long builtFor = Long.MIN_VALUE;
 
 	SpringAiAgentModels(AgenticProperties properties, JsonMapper json) {
+		this(properties, json, (ModelOverride) null);
+	}
+
+	@org.springframework.beans.factory.annotation.Autowired
+	SpringAiAgentModels(AgenticProperties properties, JsonMapper json,
+			org.springframework.beans.factory.ObjectProvider<ModelOverride> override) {
+		this(properties, json, override == null ? null : override.getIfAvailable());
+	}
+
+	SpringAiAgentModels(AgenticProperties properties, JsonMapper json, ModelOverride override) {
+		this.override = override;
 		this.settings = properties.models();
 		this.policy = new SpringAiAgentModel.CallPolicy(properties.agent().modelTimeout(), properties.agent().modelRetries(),
 				SpringAiAgentModel.CallPolicy.DEFAULT.firstBackoff(), SpringAiAgentModel.CallPolicy.DEFAULT.maxBackoff());
@@ -36,11 +49,24 @@ class SpringAiAgentModels implements AgentModels {
 
 	@Override
 	public synchronized AgentModel forRole(AgentRole role) {
+		long version = override == null ? 0 : override.version();
+		if (version != builtFor) {
+			cache.clear();
+			builtFor = version;
+		}
 		return cache.computeIfAbsent(role, this::build);
 	}
 
 	private AgentModel build(AgentRole role) {
 		String key = role.name().toLowerCase(Locale.ROOT);
+		java.util.Optional<ModelOverride.Choice> choice = override == null ? java.util.Optional.empty() : override.current();
+		if (choice.isPresent()) {
+			AgenticProperties.RoleModel configured = settings.roles().get(key);
+			AgenticProperties.RoleModel roleModel = new AgenticProperties.RoleModel(choice.get().provider().type(),
+					choice.get().model(), configured == null ? 16000 : configured.maxOutputTokens(),
+					configured == null ? "" : configured.effort());
+			return create(key, choice.get().provider(), roleModel);
+		}
 		AgenticProperties.RoleModel roleModel = settings.roles().get(key);
 		if (roleModel == null) {
 			throw new IllegalStateException("no model configured for role " + key + " (agentic.models.roles." + key + ")");
@@ -49,6 +75,10 @@ class SpringAiAgentModels implements AgentModels {
 		if (provider == null) {
 			throw new IllegalStateException("role " + key + " uses unknown provider '" + roleModel.provider() + "'");
 		}
+		return create(key, provider, roleModel);
+	}
+
+	private AgentModel create(String key, AgenticProperties.Provider provider, AgenticProperties.RoleModel roleModel) {
 		AgenticProperties.Pricing pricing = settings.pricing().get(roleModel.model());
 		if (pricing == null) {
 			log.warn("no pricing for model {}; its cost is tracked as zero (token budgets still apply)", roleModel.model());

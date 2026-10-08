@@ -45,6 +45,7 @@ class SecurityConfiguration {
 	static final String VIEWER = "VIEWER";
 	static final String OPERATOR = "OPERATOR";
 	static final String APPROVER = "APPROVER";
+	static final String ADMIN = "ADMIN";
 
 	@Bean
 	SecurityWebFilterChain apiSecurity(ServerHttpSecurity http, AgenticProperties properties,
@@ -63,12 +64,16 @@ class SecurityConfiguration {
 						.permitAll()
 						// Webhooks authenticate by signature or token inside the controller.
 						.pathMatchers(HttpMethod.POST, "/api/v1/webhooks/**").permitAll()
+						// First-run setup status and local sign-in (ADR-0007); they hold no secrets.
+						.pathMatchers(HttpMethod.GET, "/api/v1/setup").permitAll()
+						.pathMatchers(HttpMethod.POST, "/api/v1/setup/admin", "/api/v1/auth/login").permitAll()
+						.pathMatchers("/api/v1/connectors/**", "/api/v1/connectors").hasRole(ADMIN)
 						// MCP clients discover the authorization server here (RFC 9728).
 						.pathMatchers(HttpMethod.GET, ProtectedResourceMetadata.PATH, ProtectedResourceMetadata.PATH + "/**")
 						.permitAll()
 						// MCP: any API role may connect; each tool checks the role it needs (ADR-0005).
 						.pathMatchers(mcpEndpoint).hasAnyRole(VIEWER, OPERATOR, APPROVER)
-						.pathMatchers(HttpMethod.GET, "/api/v1/**").hasAnyRole(VIEWER, OPERATOR, APPROVER)
+						.pathMatchers(HttpMethod.GET, "/api/v1/**").hasAnyRole(VIEWER, OPERATOR, APPROVER, ADMIN)
 						.pathMatchers(HttpMethod.POST, "/api/v1/tasks", "/api/v1/runs/*/cancel", "/api/v1/runs/*/resume",
 								"/api/v1/runs/*/revisions")
 						.hasRole(OPERATOR)
@@ -77,7 +82,8 @@ class SecurityConfiguration {
 						.anyExchange().denyAll())
 				.oauth2ResourceServer(oauth2 -> oauth2
 						.authenticationEntryPoint(SecurityConfiguration::challenge)
-						.jwt(jwt -> jwt.jwtAuthenticationConverter(rolesConverter(properties.security().rolesClaim()))))
+						.jwt(jwt -> jwt.jwtAuthenticationConverter(rolesConverter(
+								properties.security().local() ? "roles" : properties.security().rolesClaim()))))
 				.headers(headers -> headers
 						// The UI renews tokens in a hidden same-origin iframe (silent-renew.html).
 						.frameOptions(frame -> frame.mode(XFrameOptionsServerHttpHeadersWriter.Mode.SAMEORIGIN))

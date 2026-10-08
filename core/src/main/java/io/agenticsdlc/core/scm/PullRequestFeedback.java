@@ -13,6 +13,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.Supplier;
 import java.util.regex.Pattern;
 import reactor.core.publisher.Mono;
 
@@ -31,9 +32,9 @@ public final class PullRequestFeedback {
 	private final RunStore store;
 	private final RunCommands commands;
 	private final PullRequests pullRequests;
-	private final String mention;
+	private final Supplier<String> mention;
 	private final int maxCiFixes;
-	private final String runLinkBase;
+	private final Supplier<String> runLinkBase;
 
 	/**
 	 * @param mention how reviewers address the bot, e.g. {@code @agentic-sdlc}; matched case-insensitively
@@ -41,15 +42,26 @@ public final class PullRequestFeedback {
 	 */
 	public PullRequestFeedback(RunStore store, RunCommands commands, PullRequests pullRequests, String mention,
 			int maxCiFixes, String runLinkBase) {
+		this(store, commands, pullRequests, constant(mention), maxCiFixes, () -> runLinkBase);
+	}
+
+	/** Mention and link prefix read per event, for settings that change at runtime. */
+	public PullRequestFeedback(RunStore store, RunCommands commands, PullRequests pullRequests,
+			Supplier<String> mention, int maxCiFixes, Supplier<String> runLinkBase) {
 		this.store = Objects.requireNonNull(store, "store");
 		this.commands = Objects.requireNonNull(commands, "commands");
 		this.pullRequests = Objects.requireNonNull(pullRequests, "pullRequests");
-		this.mention = Objects.requireNonNull(mention, "mention").strip();
-		if (this.mention.isEmpty()) {
+		this.mention = Objects.requireNonNull(mention, "mention");
+		this.maxCiFixes = maxCiFixes;
+		this.runLinkBase = Objects.requireNonNull(runLinkBase, "runLinkBase");
+	}
+
+	private static Supplier<String> constant(String mention) {
+		String value = Objects.requireNonNull(mention, "mention").strip();
+		if (value.isEmpty()) {
 			throw new IllegalArgumentException("mention must not be blank");
 		}
-		this.maxCiFixes = maxCiFixes;
-		this.runLinkBase = runLinkBase;
+		return () -> value;
 	}
 
 	/**
@@ -85,6 +97,10 @@ public final class PullRequestFeedback {
 
 	public Mono<Result> onComment(Comment comment) {
 		String body = Objects.toString(comment.body(), "");
+		String mention = Objects.toString(this.mention.get(), "").strip();
+		if (mention.isEmpty()) {
+			return ignored("no mention is configured");
+		}
 		if (!body.toLowerCase(Locale.ROOT).contains(mention.toLowerCase(Locale.ROOT))) {
 			return ignored("the comment does not mention " + mention);
 		}
@@ -188,7 +204,8 @@ public final class PullRequestFeedback {
 	}
 
 	private String link(UUID runId) {
-		return runLinkBase == null || runLinkBase.isBlank() ? runId.toString() : runLinkBase + runId;
+		String base = runLinkBase.get();
+		return base == null || base.isBlank() ? runId.toString() : base + runId;
 	}
 
 	private static String abbreviateSha(String sha) {

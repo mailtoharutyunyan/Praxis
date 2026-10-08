@@ -1,6 +1,6 @@
 package io.agenticsdlc.adapter.in.web;
 
-import io.agenticsdlc.config.AgenticProperties;
+import io.agenticsdlc.config.JiraRuntime;
 import io.agenticsdlc.core.intake.TicketIntake;
 import java.util.Arrays;
 import java.util.HashSet;
@@ -9,7 +9,6 @@ import java.util.Map;
 import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnBooleanProperty;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -34,18 +33,15 @@ import tools.jackson.databind.json.JsonMapper;
  * The body only identifies the issue; its content is read back from Jira by {@link TicketIntake}.
  */
 @RestController
-@ConditionalOnBooleanProperty("agentic.jira.enabled")
 class JiraWebhookController {
 
 	private static final Logger log = LoggerFactory.getLogger(JiraWebhookController.class);
 
-	private final TicketIntake intake;
-	private final AgenticProperties.Jira settings;
+	private final JiraRuntime jira;
 	private final JsonMapper json;
 
-	JiraWebhookController(TicketIntake intake, AgenticProperties properties, JsonMapper json) {
-		this.intake = intake;
-		this.settings = properties.jira();
+	JiraWebhookController(JiraRuntime jira, JsonMapper json) {
+		this.jira = jira;
 		this.json = json;
 	}
 
@@ -53,17 +49,21 @@ class JiraWebhookController {
 	Mono<ResponseEntity<Map<String, Object>>> receive(@RequestBody byte[] body,
 			@RequestHeader(name = "X-Hub-Signature", required = false) String signature,
 			@RequestHeader(name = "X-Agentic-Webhook-Token", required = false) String token) {
+		JiraRuntime.Active settings = jira.current().orElse(null);
+		if (settings == null) {
+			return Mono.just(ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", "Jira is not configured")));
+		}
 		boolean signed = WebhookSignatures.validHubSignature(signature, body, settings.webhookSecret());
 		boolean automation = !signed && WebhookSignatures.validToken(token, settings.automationToken());
 		if (!signed && !automation) {
 			return Mono.just(ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of("error", "invalid signature")));
 		}
 		JsonNode event = json.readTree(body);
-		TicketIntake.Trigger trigger = signed ? fromWebhook(event, body) : fromAutomation(event);
+		TicketIntake.Trigger trigger = signed ? fromWebhook(event, body, settings.triggerLabel()) : fromAutomation(event);
 		if (trigger == null) {
 			return Mono.just(ResponseEntity.ok(Map.of("ignored", "not a trigger for label '" + settings.triggerLabel() + "'")));
 		}
-		return intake.onTrigger(trigger).map(result -> switch (result) {
+		return settings.intake().onTrigger(trigger).map(result -> switch (result) {
 			case TicketIntake.Result.Started started -> ResponseEntity.status(HttpStatus.ACCEPTED).body(Map.<String, Object>of(
 					"runId", started.submission().view().run().id().toString(), "created", started.submission().created()));
 			case TicketIntake.Result.Ignored ignored -> {
@@ -73,15 +73,15 @@ class JiraWebhookController {
 		});
 	}
 
-	private TicketIntake.Trigger fromWebhook(JsonNode event, byte[] body) {
+	private TicketIntake.Trigger fromWebhook(JsonNode event, byte[] body, String triggerLabel) {
 		String type = event.path("webhookEvent").asString("");
 		String key = event.path("issue").path("key").asString(null);
 		if (key == null) {
 			return null;
 		}
 		boolean triggered = switch (type) {
-			case "jira:issue_created" -> hasLabel(event.path("issue").path("fields").path("labels"));
-			case "jira:issue_updated" -> labelAdded(event.path("changelog").path("items"));
+			case "jira:issue_created" -> hasLabel(event.path("issue").path("fields").path("labels"), triggerLabel);
+			case "jira:issue_updated" -> labelAdded(event.path("changelog").path("items"), triggerLabel);
 			default -> false;
 		};
 		if (!triggered) {
@@ -107,8 +107,8 @@ class JiraWebhookController {
 		return new TicketIntake.Trigger(key, eventId, event.path("actor").asString("automation"));
 	}
 
-	private boolean hasLabel(JsonNode labels) {
-		String wanted = settings.triggerLabel().toLowerCase(Locale.ROOT);
+	private static boolean hasLabel(JsonNode labels, String triggerLabel) {
+		String wanted = triggerLabel.toLowerCase(Locale.ROOT);
 		for (JsonNode label : labels) {
 			if (label.asString("").toLowerCase(Locale.ROOT).equals(wanted)) {
 				return true;
@@ -118,8 +118,8 @@ class JiraWebhookController {
 	}
 
 	/** Changelog label values are space-separated full lists; the label is added if it is in "to" but not "from". */
-	private boolean labelAdded(JsonNode items) {
-		String wanted = settings.triggerLabel().toLowerCase(Locale.ROOT);
+	private static boolean labelAdded(JsonNode items, String triggerLabel) {
+		String wanted = triggerLabel.toLowerCase(Locale.ROOT);
 		for (JsonNode item : items) {
 			if ("labels".equals(item.path("field").asString(""))) {
 				return words(item.path("toString").asString("")).contains(wanted)
