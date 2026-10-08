@@ -79,6 +79,17 @@ public final class InMemoryRunStore implements RunStore, RunChangeSignals {
 	}
 
 	@Override
+	public synchronized Flux<RunView> listUpdatedSince(io.agenticsdlc.core.domain.TaskOrigin origin, Instant since,
+			int limit) {
+		return Flux.fromIterable(runs.values().stream()
+				.filter(r -> tasks.get(r.taskId()).origin() == origin && r.updatedAt().isAfter(since))
+				.sorted(Comparator.comparing(Run::updatedAt))
+				.limit(limit)
+				.map(r -> new RunView(r, tasks.get(r.taskId())))
+				.toList());
+	}
+
+	@Override
 	public synchronized Mono<Run> update(Run current, Run next, List<RunEvent> newEvents) {
 		Run stored = runs.get(current.id());
 		if (stored == null || stored.version() != current.version()) {

@@ -68,6 +68,16 @@ agentic:
     pull-request-poll-interval: 2m
     # api-urls:                       # only for GitHub Enterprise / self-managed GitLab
     #   "[ghe.corp.example]": https://ghe.corp.example/api/v3
+  jira:
+    enabled: false
+    # base-url: https://acme.atlassian.net
+    # email: bot@acme.com                 # blank = api-token is a Data Center PAT (Bearer)
+    # api-token: ${JIRA_API_TOKEN}
+    # webhook-secret: ${JIRA_WEBHOOK_SECRET}
+    # automation-token: ${JIRA_AUTOMATION_TOKEN}
+    trigger-label: agentic
+    # projects:
+    #   SHOP: { kind: GITHUB, clone-url: https://github.com/acme/shop.git, base-branch: main }
   agent:
     enabled: true
     max-turns: 60

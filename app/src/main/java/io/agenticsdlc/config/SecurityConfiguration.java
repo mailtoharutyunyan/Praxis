@@ -49,6 +49,8 @@ class SecurityConfiguration {
 				.cors(cors -> cors.configurationSource(cors(properties.security().corsAllowedOrigins())))
 				.authorizeExchange(auth -> auth
 						.pathMatchers("/actuator/health/**", "/actuator/info", "/actuator/prometheus").permitAll()
+						// Webhooks authenticate by signature or token inside the controller.
+						.pathMatchers(HttpMethod.POST, "/api/v1/webhooks/**").permitAll()
 						.pathMatchers(HttpMethod.GET, "/api/v1/**").hasAnyRole(VIEWER, OPERATOR, APPROVER)
 						.pathMatchers(HttpMethod.POST, "/api/v1/tasks", "/api/v1/runs/*/cancel", "/api/v1/runs/*/resume")
 						.hasRole(OPERATOR)

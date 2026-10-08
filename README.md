@@ -2,7 +2,7 @@
 
 Turns a task (a prompt, a Jira ticket, or another source) into a reviewed pull request. An agent plans the work, implements it in an isolated Docker sandbox, runs the build and tests, and reviews its own changes. Humans approve at gates whose number scales with the task's risk. A human always approves the push, and merging is never automated.
 
-> Status: **M5 (publishing to GitHub, GitLab, Bitbucket, Azure DevOps)**. See [the roadmap](#roadmap).
+> Status: **M6 (Jira intake and status comments)**. See [the roadmap](#roadmap).
 
 ## Stack
 - Java 25 (LTS), Spring Boot 4.1.1, Spring WebFlux, Project Reactor
@@ -153,6 +153,33 @@ Both steps are idempotent: a retry finds the existing branch and pull request. T
 
 For GitHub Enterprise or self-managed GitLab, set `agentic.scm.api-urls."[host]"`. Setting `agentic.scm.draft-pull-requests=true` opens drafts.
 
+## Jira
+Label an issue `agentic` (or whatever `agentic.jira.trigger-label` is) to start a run. A run starts when the issue is created with the label, or when the label is added later. `POST /api/v1/webhooks/jira` accepts two senders:
+- **Jira admin webhook** (events: issue created and issue updated) with a secret. Requests are verified with `X-Hub-Signature: sha256=…` over the raw body. Retries reuse `X-Atlassian-Webhook-Identifier` and map to the same run.
+- **Jira Automation "Send web request"** with header `X-Agentic-Webhook-Token: <agentic.jira.automation-token>` and body `{"key": "{{issue.key}}"}`.
+
+The webhook body only names the issue. The summary, description (rich text converted to plain text) and labels are read back from Jira REST v3, and the project key selects the repository (`agentic.jira.projects.<KEY>`). Ticket text is untrusted: it always passes the SPEC gate and is framed as data for the models.
+
+The run's progress is posted back as issue comments, once each, through a durable cursor:
+- run started;
+- waiting at a gate;
+- pull request opened;
+- needs a human (with the reason);
+- failed, cancelled, or done.
+
+```yaml
+agentic:
+  jira:
+    enabled: true
+    base-url: https://acme.atlassian.net
+    email: bot@acme.com            # Cloud: Basic email:api-token; leave blank for a Data Center PAT
+    api-token: ${JIRA_API_TOKEN}
+    webhook-secret: ${JIRA_WEBHOOK_SECRET}
+    run-link-base: https://agentic.example.com/runs/
+    projects:
+      SHOP: { kind: GITHUB, clone-url: https://github.com/acme/shop.git, base-branch: main }
+```
+
 ## API (v1)
 All endpoints need a bearer JWT from your OIDC provider (`spring.security.oauth2.resourceserver.jwt.issuer-uri`). Roles are read from the `roles` claim, configurable with `agentic.security.roles-claim` (Keycloak: `realm_access.roles`). Errors are RFC 9457 problem details.
 
@@ -179,6 +206,6 @@ Operations: `/actuator/health/{liveness,readiness}` and `/actuator/prometheus`, 
 | **M3** ✅ | Spring AI model registry (per-role provider/model), tool loop with budgets |
 | **M4** ✅ | Triage → context → spec → implement ⇄ verify → review, all gates |
 | **M5** ✅ | SCM providers: GitHub, GitLab, Bitbucket, Azure DevOps (branch push + PR) |
-| M6 | Jira intake (webhook + REST) and status comments |
+| **M6** ✅ | Jira intake (webhook + REST) and status comments |
 | M7 | Evaluation harness built from historical tickets |
 | M8 | Web UI |

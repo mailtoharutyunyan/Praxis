@@ -257,6 +257,12 @@ class ApplicationServicesTest {
 		}
 
 		@Override
+		public reactor.core.publisher.Flux<io.agenticsdlc.core.domain.RunView> listUpdatedSince(
+				io.agenticsdlc.core.domain.TaskOrigin origin, java.time.Instant since, int limit) {
+			return delegate.listUpdatedSince(origin, since, limit);
+		}
+
+		@Override
 		public Mono<Run> update(Run current, Run next, List<RunEvent> events) {
 			return delegate.update(current, next, events);
 		}

@@ -19,7 +19,7 @@ import org.springframework.validation.annotation.Validated;
 public record AgenticProperties(@Valid @NotNull Worker worker, @Valid @NotNull Limits limits,
 		@Valid @NotNull Gates gates, @Valid @NotNull Security security, @Valid @NotNull Events events,
 		@Valid @NotNull StubStages stubStages, @Valid @NotNull Sandbox sandbox, @Valid @NotNull Scm scm,
-		@Valid @NotNull Models models, @Valid @NotNull Agent agent) {
+		@Valid @NotNull Models models, @Valid @NotNull Agent agent, @Valid @NotNull Jira jira) {
 
 	/**
 	 * @param enabled run the background worker on this instance (disable for API-only replicas)
@@ -149,5 +149,27 @@ public record AgenticProperties(@Valid @NotNull Worker worker, @Valid @NotNull L
 	public record Agent(@DefaultValue("true") boolean enabled, @DefaultValue("60") @Min(1) int maxTurns,
 			@DefaultValue("12000") @Min(500) int maxToolResultChars, @DefaultValue("3") @Min(2) int maxRepeats,
 			@DefaultValue("16000") @Min(256) int maxOutputTokens) {
+	}
+
+	/**
+	 * Jira intake and status comments (Jira Cloud REST v3).
+	 *
+	 * @param email Atlassian account email for Basic auth; blank sends {@code apiToken} as a Bearer PAT (Data Center)
+	 * @param webhookSecret secret of the Jira admin webhook; requests must carry a matching {@code X-Hub-Signature}
+	 * @param automationToken shared secret Jira Automation "Send web request" rules send in
+	 *        {@code X-Agentic-Webhook-Token}
+	 * @param triggerLabel issues with this label start a run when created with it or when it is added
+	 * @param projects Jira project key → repository the work goes to
+	 * @param runLinkBase prefix for links to a run in comments (the UI), e.g. https://agentic.example.com/runs/
+	 */
+	public record Jira(@DefaultValue("false") boolean enabled, @DefaultValue("") String baseUrl,
+			@DefaultValue("") String email, @DefaultValue("") String apiToken, @DefaultValue("") String webhookSecret,
+			@DefaultValue("") String automationToken, @DefaultValue("agentic") @NotBlank String triggerLabel,
+			@DefaultValue({}) java.util.Map<String, @Valid JiraProject> projects, @DefaultValue("") String runLinkBase,
+			@DefaultValue("30s") @NotNull Duration updateInterval) {
+	}
+
+	public record JiraProject(@NotNull io.agenticsdlc.core.domain.ScmKind kind, @NotNull java.net.URI cloneUrl,
+			@DefaultValue("") String baseBranch) {
 	}
 }

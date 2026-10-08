@@ -38,6 +38,9 @@ public interface RunStore {
 	/** Newest first. {@code createdBefore} is an exclusive cursor; null starts from the newest run. */
 	Flux<RunView> list(Set<RunState> states, Instant createdBefore, int limit);
 
+	/** Runs from one origin updated after {@code since}, oldest change first. */
+	Flux<RunView> listUpdatedSince(io.agenticsdlc.core.domain.TaskOrigin origin, Instant since, int limit);
+
 	/** Persist {@code next} if {@code current} is still the stored version; returns the stored instance. */
 	Mono<Run> update(Run current, Run next, List<RunEvent> events);
 

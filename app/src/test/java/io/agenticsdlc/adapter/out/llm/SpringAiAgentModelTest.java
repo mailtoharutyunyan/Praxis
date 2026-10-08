@@ -173,6 +173,6 @@ class SpringAiAgentModelTest {
 	}
 
 	private static AgenticProperties properties(AgenticProperties.Models models) {
-		return new AgenticProperties(null, null, null, null, null, null, null, null, models, null);
+		return new AgenticProperties(null, null, null, null, null, null, null, null, models, null, null);
 	}
 }

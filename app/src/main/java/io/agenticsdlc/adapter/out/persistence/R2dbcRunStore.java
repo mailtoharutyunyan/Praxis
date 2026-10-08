@@ -102,6 +102,18 @@ class R2dbcRunStore implements RunStore {
 	}
 
 	@Override
+	public Flux<RunView> listUpdatedSince(io.agenticsdlc.core.domain.TaskOrigin origin, Instant since, int limit) {
+		return db.sql("select " + RunRows.RUN_COLUMNS + ", " + RunRows.TASK_COLUMNS
+						+ " from runs r join tasks t on t.id = r.task_id"
+						+ " where t.origin = :origin and r.updated_at > :since order by r.updated_at limit :limit")
+				.bind("origin", origin.name())
+				.bind("since", timestamp(since))
+				.bind("limit", limit)
+				.map(row -> new RunView(RunRows.run(row), RunRows.task(row)))
+				.all();
+	}
+
+	@Override
 	public Mono<Run> update(Run current, Run next, List<RunEvent> events) {
 		if (!current.id().equals(next.id())) {
 			return Mono.error(new IllegalArgumentException("current and next must be the same run"));
