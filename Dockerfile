@@ -14,7 +14,7 @@ RUN npm ci --no-audit --no-fund
 COPY ui/ ./
 RUN UI_OUT_DIR=/out/static npm run build
 
-FROM eclipse-temurin:25.0.4_7-jdk-noble AS build
+FROM eclipse-temurin:26.0.2_10-jdk-noble AS build
 WORKDIR /src
 COPY .mvn/ .mvn/
 COPY mvnw pom.xml ./
@@ -25,7 +25,7 @@ RUN --mount=type=cache,target=/root/.m2 \
     ./mvnw -B -ntp -DskipTests -Djacoco.skip=true package \
     && java -Djarmode=tools -jar app/target/app-*.jar extract --layers --launcher --destination /extracted
 
-FROM eclipse-temurin:25.0.4_7-jre-noble
+FROM eclipse-temurin:26.0.2_10-jre-noble
 # A fixed non-root uid: it owns the workspace volume, and sandboxes run as the workspace owner (never root).
 RUN groupadd --system --gid 10001 agentic \
     && useradd --system --uid 10001 --gid agentic --home-dir /home/agentic --create-home agentic \
