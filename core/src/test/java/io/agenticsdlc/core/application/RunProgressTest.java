@@ -76,6 +76,9 @@ class RunProgressTest {
 		assertThat(over.percent()).isEqualTo(75);
 		assertThat(over.finished()).isTrue();
 		assertThat(RunProgress.of(received).percent()).isZero();
+		RunProgress cancelledEarly = RunProgress.of(received.transitionTo(RunState.CANCELLED, T0));
+		assertThat(cancelledEarly.finished()).isTrue();
+		assertThat(cancelledEarly.step()).isEqualTo(1);
 	}
 
 	@Test

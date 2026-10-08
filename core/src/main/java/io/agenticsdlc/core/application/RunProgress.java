@@ -89,6 +89,9 @@ public record RunProgress(int percent, String phase, int step, int steps, String
 	}
 
 	private static int step(RunState state) {
+		if (state == null) {
+			return 1;
+		}
 		int index = ORDER.indexOf(state);
 		return index < 0 ? 1 : index + 1;
 	}
