@@ -12,4 +12,9 @@ public interface StageHandler {
 	RunState stage();
 
 	Mono<StageOutcome> execute(StageContext context);
+
+	/** Placeholders stand in until a real handler for the stage is configured; a real one always wins. */
+	default boolean placeholder() {
+		return false;
+	}
 }

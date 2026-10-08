@@ -97,5 +97,10 @@ public class StubStageHandlers {
 		StageOutcome outcome(StageContext context) {
 			return StageOutcome.Completed.free();
 		}
+
+		@Override
+		public boolean placeholder() {
+			return true;
+		}
 	}
 }

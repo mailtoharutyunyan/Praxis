@@ -1,5 +1,6 @@
 package io.agenticsdlc.config;
 
+import io.agenticsdlc.core.application.RepositoryPolicy;
 import io.agenticsdlc.core.application.RunCommands;
 import io.agenticsdlc.core.application.RunQueries;
 import io.agenticsdlc.core.application.TaskIntake;
@@ -7,6 +8,7 @@ import io.agenticsdlc.core.engine.RunLimits;
 import io.agenticsdlc.core.port.RunChangeSignals;
 import io.agenticsdlc.core.port.RunStore;
 import java.time.Clock;
+import java.util.Set;
 import java.util.UUID;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
@@ -30,8 +32,13 @@ class CoreConfiguration {
 	}
 
 	@Bean
-	TaskIntake taskIntake(RunStore store, Clock clock) {
-		return new TaskIntake(store, clock, UUID::randomUUID);
+	RepositoryPolicy repositoryPolicy(AgenticProperties properties) {
+		return new RepositoryPolicy(Set.copyOf(properties.scm().allowedHosts()));
+	}
+
+	@Bean
+	TaskIntake taskIntake(RunStore store, Clock clock, RepositoryPolicy repositories) {
+		return new TaskIntake(store, clock, UUID::randomUUID, repositories);
 	}
 
 	@Bean

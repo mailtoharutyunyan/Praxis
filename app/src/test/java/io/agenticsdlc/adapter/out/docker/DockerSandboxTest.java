@@ -1,0 +1,137 @@
+package io.agenticsdlc.adapter.out.docker;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+import com.github.dockerjava.api.DockerClient;
+import com.github.dockerjava.api.command.InspectContainerResponse;
+import com.github.dockerjava.core.DefaultDockerClientConfig;
+import com.github.dockerjava.core.DockerClientImpl;
+import com.github.dockerjava.zerodep.ZerodepDockerHttpClient;
+import io.agenticsdlc.config.AgenticProperties;
+import io.agenticsdlc.config.WorkspacePaths;
+import io.agenticsdlc.core.workspace.CommandResult;
+import io.agenticsdlc.core.workspace.SandboxSpec;
+import io.agenticsdlc.support.TestRepos;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.time.Duration;
+import java.util.Map;
+import java.util.UUID;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+import org.springframework.util.unit.DataSize;
+
+/** Runs against the local Docker engine (the same one Testcontainers uses). */
+class DockerSandboxTest {
+
+	private static DockerClient docker;
+
+	@TempDir
+	Path tmp;
+
+	private DockerSandbox sandbox;
+	private UUID runId;
+	private WorkspacePaths paths;
+
+	@BeforeAll
+	static void connect() {
+		DefaultDockerClientConfig config = DefaultDockerClientConfig.createDefaultConfigBuilder().build();
+		docker = DockerClientImpl.getInstance(config, new ZerodepDockerHttpClient.Builder()
+				.dockerHost(config.getDockerHost()).build());
+	}
+
+	@AfterAll
+	static void disconnect() throws Exception {
+		docker.close();
+	}
+
+	@BeforeEach
+	void setUp() throws Exception {
+		paths = new WorkspacePaths(tmp);
+		runId = UUID.randomUUID();
+		Files.createDirectories(paths.repo(runId));
+		Files.writeString(paths.repo(runId).resolve("hello.txt"), "hello\n");
+		AgenticProperties.Sandbox settings = new AgenticProperties.Sandbox(true, tmp, "", "none",
+				DataSize.ofMegabytes(256), 1, 128, "", Duration.ofMinutes(1), Duration.ofMinutes(5), 2_000);
+		sandbox = new DockerSandbox(docker, paths, settings);
+		sandbox.start(runId, new SandboxSpec(TestRepos.ALPINE, Map.of("GREETING", "hi"))).block();
+	}
+
+	@AfterEach
+	void tearDown() {
+		sandbox.destroy(runId).block();
+	}
+
+	private CommandResult run(String command, Duration timeout) {
+		return sandbox.exec(runId, command, timeout).block();
+	}
+
+	@Test
+	void runsCommandsInMountedWorkspace() throws Exception {
+		CommandResult cat = run("cat hello.txt && echo $GREETING && pwd", Duration.ofSeconds(30));
+		assertThat(cat.succeeded()).isTrue();
+		assertThat(cat.output()).contains("hello", "hi", "/workspace");
+
+		run("echo written > out.txt", Duration.ofSeconds(30));
+		assertThat(Files.readString(paths.repo(runId).resolve("out.txt"))).isEqualTo("written\n");
+	}
+
+	@Test
+	void reportsExitCodesAndStderr() {
+		CommandResult failed = run("echo boom >&2; exit 3", Duration.ofSeconds(30));
+		assertThat(failed.exitCode()).isEqualTo(3);
+		assertThat(failed.succeeded()).isFalse();
+		assertThat(failed.output()).contains("boom");
+	}
+
+	@Test
+	void killsCommandsThatExceedTheTimeout() {
+		CommandResult slow = run("sleep 30", Duration.ofSeconds(1));
+		assertThat(slow.timedOut()).isTrue();
+		assertThat(slow.took()).isLessThan(Duration.ofSeconds(20));
+	}
+
+	@Test
+	void truncatesLongOutputKeepingTheTail() {
+		CommandResult noisy = run("i=0; while [ $i -lt 2000 ]; do echo line-$i; i=$((i+1)); done; echo THE-END",
+				Duration.ofSeconds(30));
+		assertThat(noisy.truncated()).isTrue();
+		assertThat(noisy.output()).startsWith("line-0").contains("characters omitted").endsWith("THE-END\n");
+		assertThat(noisy.output().length()).isLessThan(2_200);
+	}
+
+	@Test
+	void containerIsHardened() {
+		InspectContainerResponse container = docker.inspectContainerCmd(DockerSandbox.containerName(runId)).exec();
+		assertThat(container.getConfig().getUser()).isNotBlank().isNotEqualTo("0:0").isNotEqualTo("root");
+		assertThat(container.getHostConfig().getSecurityOpts()).contains("no-new-privileges");
+		assertThat(container.getHostConfig().getCapDrop()).isNotEmpty();
+		assertThat(container.getHostConfig().getNetworkMode()).isEqualTo("none");
+		assertThat(container.getHostConfig().getMemory()).isEqualTo(DataSize.ofMegabytes(256).toBytes());
+		assertThat(container.getConfig().getEnv()).noneMatch(e -> e.toLowerCase().contains("token"));
+		assertThat(run("id -u", Duration.ofSeconds(30)).output().trim()).isNotEqualTo("0");
+	}
+
+	@Test
+	void startIsIdempotentAndDestroyToo() {
+		sandbox.start(runId, new SandboxSpec(TestRepos.ALPINE, Map.of())).block();
+		assertThat(run("true", Duration.ofSeconds(30)).succeeded()).isTrue();
+		sandbox.destroy(runId).block();
+		sandbox.destroy(runId).block();
+		sandbox.start(runId, new SandboxSpec(TestRepos.ALPINE, Map.of())).block();
+		assertThat(run("cat hello.txt", Duration.ofSeconds(30)).output()).contains("hello");
+	}
+
+	@Test
+	void boundedOutputKeepsShortOutputIntact() {
+		BoundedOutput out = new BoundedOutput(100);
+		out.append("abc");
+		out.append("def");
+		assertThat(out.truncated()).isFalse();
+		assertThat(out.toString()).isEqualTo("abcdef");
+	}
+}

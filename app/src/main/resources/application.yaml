@@ -54,3 +54,15 @@ agentic:
     keep-alive: 15s
   stub-stages:
     enabled: false
+  sandbox:
+    enabled: true
+    workspace-root: ${user.home}/.agentic-sdlc/workspaces
+    network: bridge
+    memory: 4GB
+    cpus: 2
+    command-timeout: 20m
+  scm:
+    allowed-hosts: [github.com, gitlab.com, bitbucket.org, dev.azure.com]
+    clone-depth: 1
+    # tokens:
+    #   "[github.com]": ${GITHUB_TOKEN}

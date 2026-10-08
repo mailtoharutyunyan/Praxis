@@ -74,7 +74,7 @@ class RunWorkerTest {
 	}
 
 	private UUID submit() {
-		return new TaskIntake(store, CLOCK, UUID::randomUUID).submit(Fixtures.prompt("alice")).block().view().run().id();
+		return new TaskIntake(store, CLOCK, UUID::randomUUID, Fixtures.REPOSITORIES).submit(Fixtures.prompt("alice")).block().view().run().id();
 	}
 
 	/** Process until nothing is claimable (the run waits for a human or is finished). */

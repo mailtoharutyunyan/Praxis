@@ -18,7 +18,7 @@ import org.springframework.validation.annotation.Validated;
 @ConfigurationProperties("agentic")
 public record AgenticProperties(@Valid @NotNull Worker worker, @Valid @NotNull Limits limits,
 		@Valid @NotNull Gates gates, @Valid @NotNull Security security, @Valid @NotNull Events events,
-		@Valid @NotNull StubStages stubStages) {
+		@Valid @NotNull StubStages stubStages, @Valid @NotNull Sandbox sandbox, @Valid @NotNull Scm scm) {
 
 	/**
 	 * @param enabled run the background worker on this instance (disable for API-only replicas)
@@ -63,5 +63,38 @@ public record AgenticProperties(@Valid @NotNull Worker worker, @Valid @NotNull L
 
 	/** Placeholder stage handlers until the real agent stages exist. Never enable in production. */
 	public record StubStages(@DefaultValue("false") boolean enabled) {
+	}
+
+	/**
+	 * Docker sandbox for builds and agent commands (ADR-0003).
+	 *
+	 * @param enabled register the real workspace stages (context preparation, verification)
+	 * @param workspaceRoot host directory holding each run's checkout ({@code <root>/<runId>/repo}) and git metadata
+	 *        ({@code <root>/<runId>/git}, never mounted into the sandbox)
+	 * @param dockerHost Docker endpoint; empty uses {@code DOCKER_HOST} or the platform default socket
+	 * @param network container network mode; {@code none} isolates fully but then dependencies cannot be downloaded
+	 * @param user {@code uid:gid} to run as; empty uses the owner of the workspace root so files stay writable
+	 * @param maxOutputChars per command; longer output keeps its head and tail
+	 */
+	public record Sandbox(@DefaultValue("false") boolean enabled, @NotNull java.nio.file.Path workspaceRoot,
+			@DefaultValue("") String dockerHost, @DefaultValue("bridge") @NotBlank String network,
+			@DefaultValue("4GB") @NotNull org.springframework.util.unit.DataSize memory,
+			@DefaultValue("2") @DecimalMin("0.1") double cpus, @DefaultValue("1024") @Min(64) long pidsLimit,
+			@DefaultValue("") String user, @DefaultValue("20m") @NotNull Duration commandTimeout,
+			@DefaultValue("10m") @NotNull Duration imagePullTimeout,
+			@DefaultValue("32000") @Min(1000) int maxOutputChars) {
+	}
+
+	/**
+	 * Source control access from the host.
+	 *
+	 * @param allowedHosts hosts runs may clone from (SSRF guard)
+	 * @param tokens access token per host, e.g. {@code agentic.scm.tokens.[github.com]=${GITHUB_TOKEN}}; never logged
+	 * @param mirrors URL prefix rewrites like git's {@code insteadOf}, e.g. to an internal mirror
+	 * @param cloneDepth 0 for full history; shallow clones are much faster on large repositories
+	 */
+	public record Scm(@DefaultValue({ "github.com", "gitlab.com", "bitbucket.org", "dev.azure.com" }) List<String> allowedHosts,
+			@DefaultValue({}) java.util.Map<String, String> tokens, @DefaultValue({}) java.util.Map<String, String> mirrors,
+			@DefaultValue("1") @Min(0) int cloneDepth) {
 	}
 }

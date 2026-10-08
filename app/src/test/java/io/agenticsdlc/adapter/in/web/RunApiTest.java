@@ -27,7 +27,7 @@ import reactor.test.StepVerifier;
 
 /** The v1 API end to end: security rules, validation, problem details, and a run driven through all gates. */
 @Import(TestcontainersConfigurationAccess.class)
-@SpringBootTest(properties = { "agentic.stub-stages.enabled=true", "agentic.worker.poll-interval=50ms",
+@SpringBootTest(properties = { "agentic.stub-stages.enabled=true", "agentic.sandbox.enabled=false", "agentic.worker.poll-interval=50ms",
 		"agentic.events.fallback-poll=200ms" })
 class RunApiTest {
 

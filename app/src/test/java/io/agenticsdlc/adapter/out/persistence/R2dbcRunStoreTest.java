@@ -38,7 +38,7 @@ import reactor.core.publisher.Flux;
 import reactor.test.StepVerifier;
 
 @Import(TestcontainersConfigurationAccess.class)
-@SpringBootTest(properties = "agentic.worker.enabled=false")
+@SpringBootTest(properties = { "agentic.worker.enabled=false", "agentic.sandbox.enabled=false" })
 class R2dbcRunStoreTest {
 
 	private static final RepositoryRef REPO = new RepositoryRef(ScmKind.GITHUB,

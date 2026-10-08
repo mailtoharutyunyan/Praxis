@@ -23,11 +23,13 @@ public final class TaskIntake {
 	private final RunStore store;
 	private final Clock clock;
 	private final Supplier<UUID> ids;
+	private final RepositoryPolicy repositories;
 
-	public TaskIntake(RunStore store, Clock clock, Supplier<UUID> ids) {
+	public TaskIntake(RunStore store, Clock clock, Supplier<UUID> ids, RepositoryPolicy repositories) {
 		this.store = Objects.requireNonNull(store, "store");
 		this.clock = Objects.requireNonNull(clock, "clock");
 		this.ids = Objects.requireNonNull(ids, "ids");
+		this.repositories = Objects.requireNonNull(repositories, "repositories");
 	}
 
 	public Mono<RunStore.Submission> submit(NewTask request) {
@@ -44,6 +46,7 @@ public final class TaskIntake {
 	}
 
 	private Prepared build(NewTask request) {
+		repositories.check(request.repository());
 		Instant now = clock.instant();
 		Task task = new Task(ids.get(), request.origin(), request.externalRef(), request.title(), request.description(),
 				request.repository(), request.baseBranch(), trustOf(request.origin()), request.requestedBy(),

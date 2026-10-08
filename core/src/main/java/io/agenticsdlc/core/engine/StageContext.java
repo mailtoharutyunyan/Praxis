@@ -27,6 +27,10 @@ public final class StageContext {
 		this.clock = Objects.requireNonNull(clock, "clock");
 	}
 
+	public RunView view() {
+		return view;
+	}
+
 	public Run run() {
 		return view.run();
 	}

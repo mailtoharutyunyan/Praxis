@@ -27,6 +27,8 @@
 		<spring-ai.version>2.0.1</spring-ai.version>
 		<archunit.version>1.5.1</archunit.version>
 		<jacoco.version>0.8.15</jacoco.version>
+		<docker-java.version>3.7.1</docker-java.version>
+		<jgit.version>7.8.0.202609011348-r</jgit.version>
 		<!-- Line coverage each module must reach in `verify`; modules may raise or lower it. -->
 		<coverage.minimum>0.80</coverage.minimum>
 	</properties>
@@ -44,6 +46,12 @@
 				<version>${spring-ai.version}</version>
 				<type>pom</type>
 				<scope>import</scope>
+			</dependency>
+			<!-- Convergence pins: transitive versions disagree; take the newest. -->
+			<dependency>
+				<groupId>commons-io</groupId>
+				<artifactId>commons-io</artifactId>
+				<version>2.21.0</version>
 			</dependency>
 			<dependency>
 				<groupId>com.tngtech.archunit</groupId>

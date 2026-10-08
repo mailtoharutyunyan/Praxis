@@ -17,6 +17,8 @@ public final class Fixtures {
 	public static final Clock CLOCK = Clock.fixed(T0, ZoneOffset.UTC);
 	public static final RepositoryRef REPO = new RepositoryRef(ScmKind.GITHUB,
 			URI.create("https://github.com/acme/shop.git"));
+	public static final io.agenticsdlc.core.application.RepositoryPolicy REPOSITORIES =
+			new io.agenticsdlc.core.application.RepositoryPolicy(java.util.Set.of("github.com"));
 	public static final RunLimits LIMITS = new RunLimits(3, 2, 1_000_000, 5_000_000, Duration.ofMinutes(30));
 
 	private Fixtures() {

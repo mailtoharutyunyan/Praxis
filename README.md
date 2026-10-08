@@ -2,7 +2,7 @@
 
 Turns a task (a prompt, a Jira ticket, or another source) into a reviewed pull request. An agent plans the work, implements it in an isolated Docker sandbox, runs the build and tests, and reviews its own changes. Humans approve at gates whose number scales with the task's risk. A human always approves the push, and merging is never automated.
 
-> Status: **M1 (task API, run engine, live events)**. See [the roadmap](#roadmap).
+> Status: **M2 (Docker sandbox, checkout, build/test detection)**. See [the roadmap](#roadmap).
 
 ## Stack
 - Java 25 (LTS), Spring Boot 4.1.1, Spring WebFlux, Project Reactor
@@ -69,6 +69,35 @@ curl -s -X POST localhost:8080/api/v1/runs/<id>/decisions -H "Authorization: Bea
   -H 'Content-Type: application/json' -d '{"gate":"SPEC","decision":"APPROVE","comment":"ok"}'
 ```
 
+## Workspaces and the sandbox
+Each run gets a working copy on the host and one Docker container:
+- `<workspace-root>/<run>/repo` is the work tree, mounted at `/workspace` in the container.
+- `<workspace-root>/<run>/git` is the git metadata. It is never mounted and hooks are disabled, so nothing the agent writes can run on the host, where the SCM credentials live.
+
+Container hardening:
+- all capabilities dropped and `no-new-privileges`;
+- runs as a non-root user;
+- memory, CPU and process limits;
+- no credentials in the environment;
+- every command is killed by `timeout` when it runs too long.
+
+The toolchain is detected from root files: Maven, Gradle, npm/pnpm/yarn, Go, Python and .NET. A repository can override it, or declare a custom one, in `.agentic-sdlc.yml`:
+```yaml
+image: maven:3.9-eclipse-temurin-21
+setup: ./mvnw -B -ntp dependency:go-offline   # optional
+build: ./mvnw -B -ntp -DskipTests test-compile
+test:  ./mvnw -B -ntp verify
+```
+SCM settings (`agentic.scm.*`):
+- `allowed-hosts`: the hosts tasks may point at (SSRF guard).
+- `tokens."[host]"`: per-host access tokens from the environment.
+- `mirrors`: URL rewrites, like git's `insteadOf`.
+- `clone-depth`: default 1.
+
+Sandbox settings (`agentic.sandbox.*`): `network` (default `bridge`, or `none` for full isolation), `memory`, `cpus`, `command-timeout`.
+
+> Before running untrusted (ticket-sourced) tasks in production, restrict sandbox egress to package registries with a proxy or network policy; see ADR-0003.
+
 ## API (v1)
 All endpoints need a bearer JWT from your OIDC provider (`spring.security.oauth2.resourceserver.jwt.issuer-uri`). Roles are read from the `roles` claim, configurable with `agentic.security.roles-claim` (Keycloak: `realm_access.roles`). Errors are RFC 9457 problem details.
 
@@ -91,7 +120,7 @@ Operations: `/actuator/health/{liveness,readiness}` and `/actuator/prometheus`, 
 |---|---|
 | **M0** ✅ | Multi-module skeleton, schema, CI, ADRs, ArchUnit, coverage gate |
 | **M1** ✅ | Task intake API, run engine and leased worker, SSE event stream, approvals, OAuth2 roles |
-| M2 | Docker sandbox, JGit clone, build/test detection |
+| **M2** ✅ | Docker sandbox, JGit clone, build/test detection |
 | M3 | Spring AI model registry (per-role provider/model), tool loop with budgets |
 | M4 | Triage → context → spec → implement ⇄ verify → review, all gates |
 | M5 | SCM providers: GitHub, GitLab, Bitbucket, Azure DevOps (branch push + PR) |

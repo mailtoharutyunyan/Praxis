@@ -31,7 +31,7 @@ import reactor.test.StepVerifier;
 class ApplicationServicesTest {
 
 	private final InMemoryRunStore store = new InMemoryRunStore(CLOCK);
-	private final TaskIntake intake = new TaskIntake(store, CLOCK, UUID::randomUUID);
+	private final TaskIntake intake = new TaskIntake(store, CLOCK, UUID::randomUUID, Fixtures.REPOSITORIES);
 
 	private UUID submit(String requester) {
 		return intake.submit(Fixtures.prompt(requester)).block().view().run().id();
@@ -81,6 +81,15 @@ class ApplicationServicesTest {
 
 			RunStore.Submission otherUser = intake.submit(withKey(Fixtures.prompt("bob"), "k-1")).block();
 			assertThat(otherUser.created()).isTrue();
+		}
+
+		@Test
+		void repositoryHostMustBeAllowed() {
+			NewTask internal = new NewTask(io.agenticsdlc.core.domain.TaskOrigin.JIRA, "X-1", "t", "d",
+					new io.agenticsdlc.core.domain.RepositoryRef(io.agenticsdlc.core.domain.ScmKind.GITLAB,
+							java.net.URI.create("https://gitlab.internal.corp/x.git")), null, "jira", null);
+			StepVerifier.create(intake.submit(internal)).expectErrorMessage("repository host gitlab.internal.corp is not allowed")
+					.verify();
 		}
 
 		@Test
