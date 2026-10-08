@@ -1,8 +1,9 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Api } from "../lib/api";
 import { followEvents, type FollowOptions } from "../lib/sse";
 import type { Run, RunEvent, RunPage as Page } from "../lib/types";
+import { MemoryPage } from "./MemoryPage";
 import { RunPage } from "./RunPage";
 import { RunsPage } from "./RunsPage";
 
@@ -102,3 +103,21 @@ describe("RunsPage", () => {
   });
 });
 
+
+describe("MemoryPage", () => {
+  it("lists facts and lets approvers disable one", async () => {
+    const fact = { id: "f1", repository: "github.com/acme/shop", fact: "Integration tests need -Pit.",
+      citations: [{ path: "pom.xml", line: 12, snippet: "<id>it</id>" }], status: "ACTIVE" as const,
+      sourceRunId: "r1", createdAt: "2026-10-08T10:00:00Z", expiresAt: "2026-11-05T10:00:00Z" };
+    const api = {
+      listMemory: vi.fn().mockResolvedValue([fact]),
+      setFactStatus: vi.fn().mockResolvedValue({ ...fact, status: "DISABLED" }),
+    } as unknown as Api;
+    render(<MemoryPage api={api} canModerate />);
+    expect(await screen.findByText("Integration tests need -Pit.")).toBeTruthy();
+    expect(screen.getByText("pom.xml:12")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Disable" }));
+    await waitFor(() => expect(screen.getByText("disabled")).toBeTruthy());
+    expect(api.setFactStatus).toHaveBeenCalledWith("f1", "DISABLED");
+  });
+});

@@ -133,6 +133,13 @@ Several instances can share one database:
 - Jira comments and pull request polling hold a cluster-wide lease, so only one instance runs each.
 - On shutdown, a worker stops claiming runs and gives in-flight steps `drain-timeout` (20 s) to finish. Steps still running after that release their lease, so another instance picks them up immediately.
 
+### Repository memory
+Agents remember what they learn about a repository, much like Copilot Memory. The planner, coder and reviewer have a `remember` tool for durable facts such as "integration tests need `-Pit`" or "controllers live in `web/`".
+- **Citations.** Every fact must cite a line of code. The citation is checked when the fact is saved.
+- **Activation.** A new fact is a candidate. It becomes active only when a human merges the pull request of the run that learned it, and it is discarded if that pull request is closed. This keeps untrusted tasks from planting instructions.
+- **Recall.** Before each agent stage, active facts for the repository are checked against the current working copy, and a fact is used only if its cited lines still exist. Used facts stay active for another `agentic.memory.retention` (28 days); unused ones expire.
+- **Review.** Facts are listed on the UI's Memory page, through `GET /api/v1/memory` and through the `list_repository_memory` MCP tool. Approvers can activate or disable any fact. Set `agentic.memory.enabled=false` to turn memory off.
+
 ### Security scans
 After the tests pass, the changed files are scanned. Each scanner runs in its own container with the working copy mounted read-only, no capabilities, and the sandbox's non-root user.
 - **Secrets (blocking).** [gitleaks](https://github.com/gitleaks/gitleaks) runs offline and redacts secret values. A secret in a changed file sends the run back to remove it; the same finding in a file the run didn't touch is not reported.
@@ -291,6 +298,7 @@ cd ui && npm test                          # UI unit tests
 | `get_run_events` | viewer | A page of the event log; pass `afterSeq` to read only what is new. |
 | `cancel_run`, `resume_run` | operator | Stop a run, or continue one that is waiting for a human. |
 | `request_revision` | operator | Ask for changes to a run's open pull request. |
+| `list_repository_memory` | viewer | What agents learned about a repository. |
 
 Gate approvals are not available over MCP. A human approves specs, implementations and pushes in the UI. Tasks submitted over MCP are untrusted, because an assistant may relay text it read elsewhere, so they always stop at the SPEC gate.
 
@@ -319,6 +327,8 @@ All endpoints need a bearer JWT from your OIDC provider (`spring.security.oauth2
 | Method & path | Role | Purpose |
 |---|---|---|
 | `POST /api/v1/tasks` | operator | Submit a task. An optional `Idempotency-Key` header makes retries return the original run. |
+| `GET /api/v1/memory?repository=` | viewer | What agents learned about a repository: facts, citations, status. |
+| `POST /api/v1/memory/{id}/status` | approver | `{"status": "ACTIVE"}` or `"DISABLED"`. |
 | `POST /api/v1/runs/{id}/revisions` | operator | Ask for changes to the open pull request: `{"text": "...", "location": "src/App.java:42"}`. |
 | `GET /api/v1/runs?state=&createdBefore=&beforeId=&limit=` | viewer | List runs, newest first. Pass a page's `nextCreatedBefore` and `nextBeforeId` to get the next page. |
 | `GET /api/v1/runs/{id}` | viewer | Run with its task, risk, gates and usage. |

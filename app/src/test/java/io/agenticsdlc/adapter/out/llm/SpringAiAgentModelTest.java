@@ -215,6 +215,6 @@ class SpringAiAgentModelTest {
 	private static AgenticProperties properties(AgenticProperties.Models models) {
 		AgenticProperties.Agent agent = new AgenticProperties.Agent(true, 60, 12000, 3, 16000, java.time.Duration.ofMinutes(10),
 				4, true, true);
-		return new AgenticProperties(null, null, null, null, null, null, null, null, models, agent, null, null, null, null);
+		return new AgenticProperties(null, null, null, null, null, null, null, null, models, agent, null, null, null, null, null);
 	}
 }

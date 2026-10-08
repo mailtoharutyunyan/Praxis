@@ -72,7 +72,7 @@ class SecurityConfiguration {
 						.pathMatchers(HttpMethod.POST, "/api/v1/tasks", "/api/v1/runs/*/cancel", "/api/v1/runs/*/resume",
 								"/api/v1/runs/*/revisions")
 						.hasRole(OPERATOR)
-						.pathMatchers(HttpMethod.POST, "/api/v1/runs/*/decisions", "/api/v1/runs/*/risk")
+						.pathMatchers(HttpMethod.POST, "/api/v1/runs/*/decisions", "/api/v1/runs/*/risk", "/api/v1/memory/*/status")
 						.hasRole(APPROVER)
 						.anyExchange().denyAll())
 				.oauth2ResourceServer(oauth2 -> oauth2

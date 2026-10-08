@@ -76,3 +76,17 @@ export const TERMINAL: RunState[] = ["DONE", "FAILED", "CANCELLED"];
 export const PIPELINE: RunState[] = [
   "TRIAGING", "PREPARING_CONTEXT", "SPECIFYING", "IMPLEMENTING", "VERIFYING", "REVIEWING", "PUBLISHING", "PR_OPEN", "DONE",
 ];
+
+export type FactStatus = "CANDIDATE" | "ACTIVE" | "DISABLED";
+
+/** Something an agent learned about a repository, with the code it cites. */
+export interface RepoFact {
+  id: string;
+  repository: string;
+  fact: string;
+  citations: { path: string; line: number; snippet: string }[];
+  status: FactStatus;
+  sourceRunId: string | null;
+  createdAt: string;
+  expiresAt: string | null;
+}

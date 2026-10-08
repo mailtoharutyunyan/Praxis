@@ -5,6 +5,7 @@ import io.agenticsdlc.core.domain.RunEvent;
 import io.agenticsdlc.core.domain.RunEventType;
 import io.agenticsdlc.core.domain.RunState;
 import io.agenticsdlc.core.domain.RunView;
+import io.agenticsdlc.core.memory.RepoMemory;
 import io.agenticsdlc.core.port.RunStore;
 import java.util.Objects;
 import java.util.Set;
@@ -24,11 +25,26 @@ public final class PullRequestTracker {
 	private final RunStore store;
 	private final PullRequests pullRequests;
 	private final RunCommands commands;
+	private final RepoMemory memory;
+	private final java.time.Clock clock;
+	private final java.time.Duration retention;
 
 	public PullRequestTracker(RunStore store, PullRequests pullRequests, RunCommands commands) {
+		this(store, pullRequests, commands, null, java.time.Clock.systemUTC(), java.time.Duration.ZERO);
+	}
+
+	/**
+	 * @param memory facts the run learned become active when its pull request is merged (they are discarded when it
+	 *        is closed); null when repository memory is off
+	 */
+	public PullRequestTracker(RunStore store, PullRequests pullRequests, RunCommands commands, RepoMemory memory,
+			java.time.Clock clock, java.time.Duration retention) {
 		this.store = Objects.requireNonNull(store, "store");
 		this.pullRequests = Objects.requireNonNull(pullRequests, "pullRequests");
 		this.commands = Objects.requireNonNull(commands, "commands");
+		this.memory = memory;
+		this.clock = Objects.requireNonNull(clock, "clock");
+		this.retention = Objects.requireNonNull(retention, "retention");
 	}
 
 	/** Checks every open pull request once, page by page; emits the runs that finished. */
@@ -51,7 +67,10 @@ public final class PullRequestTracker {
 				.flatMap(pr -> pullRequests.state(view, pr))
 				.filter(state -> state != PullRequests.PullRequestState.OPEN)
 				.flatMap(state -> commands.closePullRequest(view.run().id(), state == PullRequests.PullRequestState.MERGED,
-						ACTOR))
+						ACTOR)
+						.flatMap(run -> memory == null ? Mono.just(run)
+								: memory.settleRun(run.id(), state == PullRequests.PullRequestState.MERGED,
+										clock.instant().plus(retention)).thenReturn(run)))
 				.map(run -> run.id());
 	}
 

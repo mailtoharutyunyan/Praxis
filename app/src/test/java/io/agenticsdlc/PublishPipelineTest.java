@@ -18,6 +18,7 @@ import io.agenticsdlc.core.domain.RepositoryRef;
 import io.agenticsdlc.core.domain.Run;
 import io.agenticsdlc.core.domain.RunEventType;
 import io.agenticsdlc.core.domain.RunState;
+import io.agenticsdlc.core.memory.RepoFact;
 import io.agenticsdlc.core.domain.ScmKind;
 import io.agenticsdlc.core.domain.TaskOrigin;
 import io.agenticsdlc.core.domain.Usage;
@@ -121,7 +122,10 @@ class PublishPipelineTest {
 					AgentRole.TRIAGE, List.of(answer("RISK: LOW\nRATIONALE: one line of text")),
 					AgentRole.PLANNER, List.of(answer("## Requirements\n1. WHEN read THE SYSTEM SHALL greet agents.")),
 					AgentRole.CODER, List.of(call("edit_file", Map.of("path", "hello.txt", "old_string", "hello world",
-							"new_string", "hello agent")), answer("Done."),
+							"new_string", "hello agent")),
+							call("remember", Map.of("fact", "The greeting text lives in hello.txt.", "citations",
+									List.of(Map.of("path", "hello.txt", "line", 1)))),
+							answer("Done."),
 							// revision round 1: the review comment
 							call("edit_file", Map.of("path", "hello.txt", "old_string", "hello agent",
 									"new_string", "hello agents")), answer("Pluralised."),
@@ -168,6 +172,9 @@ class PublishPipelineTest {
 
 	@Autowired
 	PullRequestTracker tracker;
+
+	@Autowired
+	io.agenticsdlc.core.memory.RepoMemory memory;
 
 	private Run await(UUID id, Predicate<Run> condition) throws InterruptedException {
 		long deadline = System.currentTimeMillis() + 120_000;
@@ -286,8 +293,16 @@ class PublishPipelineTest {
 						.contains("build (failed step: mvn verify)", "GreetingTest expected 'hello agents'"));
 		reviseAndPublish(id, "Address ci feedback: CI failed on commit");
 
+		assertThat(memory.list(null, 500).collectList().block()).filteredOn(f -> id.equals(f.sourceRunId()))
+				.singleElement().satisfies(f -> assertThat(f.status()).isEqualTo(RepoFact.Status.CANDIDATE));
 		PR_STATE.set("merged");
 		assertThat(tracker.sweep().collectList().block()).contains(id);
 		assertThat(queries.get(id).block().run().state()).isEqualTo(RunState.DONE);
+		// Merged: what the run learned is now used by later runs on this repository.
+		assertThat(memory.list("github.com/acme/publish-demo", 10).collectList().block())
+				.filteredOn(f -> id.equals(f.sourceRunId())).singleElement().satisfies(f -> {
+					assertThat(f.status()).isEqualTo(RepoFact.Status.ACTIVE);
+					assertThat(f.fact()).contains("hello.txt");
+				});
 	}
 }

@@ -42,7 +42,10 @@ final class Prompts {
 			## Out of scope
 			What will deliberately not change.
 
-			Keep it as short as the change allows. Do not write the implementation.""";
+			Keep it as short as the change allows. Do not write the implementation.
+			If you learn something durable about this repository that later changes would need (a build quirk, a \
+			convention, where something lives), save it with the remember tool when it is available, citing the \
+			line that shows it.""";
 
 	static final String SPEC_CRITIC = """
 			You check a specification before an autonomous agent implements it. Compare it with the change request \
@@ -77,7 +80,10 @@ final class Prompts {
 			tools. That reply ends your turn.
 			You cannot commit, push or contact anyone; a human reviews and publishes your changes. Stay within \
 			the specification; if it is impossible or ambiguous, explain the problem in your final reply instead \
-			of guessing.""";
+			of guessing.
+			If you learn something durable about this repository that later changes would need (a build quirk, a \
+			convention, where something lives), save it with the remember tool when it is available, citing the \
+			line that shows it.""";
 
 	static final String REVIEWER = """
 			You are a meticulous code reviewer. You did not write this change. Compare the diff (show_diff) \
@@ -90,7 +96,10 @@ final class Prompts {
 			VERDICT: APPROVE
 			or
 			VERDICT: CHANGES_REQUESTED
-			Request changes only for real defects or unmet requirements.""";
+			Request changes only for real defects or unmet requirements.
+			If you learn something durable about this repository that later changes would need (a build quirk, a \
+			convention, where something lives), save it with the remember tool when it is available, citing the \
+			line that shows it.""";
 
 	/** The task, framed so text from outside systems is treated as data rather than instructions. */
 	static String task(Task task) {

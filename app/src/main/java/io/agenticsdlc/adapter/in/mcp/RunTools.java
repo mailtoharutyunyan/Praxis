@@ -13,6 +13,8 @@ import io.agenticsdlc.core.domain.RunState;
 import io.agenticsdlc.core.domain.RunView;
 import io.agenticsdlc.core.domain.ScmKind;
 import io.agenticsdlc.core.domain.TaskOrigin;
+import io.agenticsdlc.core.memory.RepoFact;
+import io.agenticsdlc.core.memory.RepoMemory;
 import java.net.URI;
 import java.util.EnumSet;
 import java.util.List;
@@ -46,8 +48,11 @@ class RunTools {
 	private final RunQueries queries;
 	private final RunCommands commands;
 	private final String runLinkBase;
+	private final RepoMemory memory;
 
-	RunTools(TaskIntake intake, RunQueries queries, RunCommands commands, AgenticProperties properties) {
+	RunTools(TaskIntake intake, RunQueries queries, RunCommands commands, AgenticProperties properties,
+			RepoMemory memory) {
+		this.memory = memory;
 		this.intake = intake;
 		this.queries = queries;
 		this.commands = commands;
@@ -149,6 +154,25 @@ class RunTools {
 		int size = limit == null ? 50 : Math.clamp(limit, 1, 200);
 		return caller(VIEW).flatMap(user -> queries.events(id, afterSeq == null ? 0 : Math.max(0, afterSeq), size)
 				.map(RunTools::eventSummary).collectList());
+	}
+
+	record Fact(String id, String fact, List<String> citations, String status, String sourceRunId) {
+	}
+
+	@McpTool(name = "list_repository_memory", description = """
+			What agents have learned about a repository (build quirks, conventions), each with the code it cites. \
+			ACTIVE facts are given to agents in later runs; CANDIDATE ones wait for their run's pull request to be \
+			merged.""",
+			annotations = @McpTool.McpAnnotations(title = "List repository memory", readOnlyHint = true,
+					destructiveHint = false, idempotentHint = true, openWorldHint = false))
+	Mono<List<Fact>> listRepositoryMemory(
+			@McpToolParam(description = "Clone URL of the repository.") String cloneUrl) {
+		String key = RepoFact.key(URI.create(required("cloneUrl", cloneUrl).strip()));
+		return caller(VIEW).flatMap(user -> memory.list(key, 100)
+				.map(f -> new Fact(f.id().toString(), f.fact(), f.citations().stream()
+						.map(c -> c.path() + ":" + c.line()).toList(), f.status().name(),
+						f.sourceRunId() == null ? null : f.sourceRunId().toString()))
+				.collectList());
 	}
 
 	@McpTool(name = "cancel_run", description = "Stop a run for good. Its branch is never pushed if it was not yet.",

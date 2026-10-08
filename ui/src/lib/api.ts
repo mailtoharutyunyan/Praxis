@@ -1,4 +1,4 @@
-import type { Gate, GateDecision, Problem, RiskLevel, Run, RunEvent, RunPage, RunState, ScmKind } from "./types";
+import type { FactStatus, Gate, GateDecision, Problem, RepoFact, RiskLevel, Run, RunEvent, RunPage, RunState, ScmKind } from "./types";
 
 export class ApiError extends Error {
   constructor(readonly status: number, readonly problem: Problem) {
@@ -72,6 +72,16 @@ export class Api {
 
   cancel(id: string, reason: string): Promise<Run> {
     return this.request(`/runs/${encodeURIComponent(id)}/cancel`, { method: "POST", body: JSON.stringify({ reason }) });
+  }
+
+  listMemory(repository?: string): Promise<RepoFact[]> {
+    const params = new URLSearchParams({ limit: "200" });
+    if (repository) params.set("repository", repository);
+    return this.request(`/memory?${params}`);
+  }
+
+  setFactStatus(id: string, status: FactStatus): Promise<RepoFact> {
+    return this.request(`/memory/${encodeURIComponent(id)}/status`, { method: "POST", body: JSON.stringify({ status }) });
   }
 
   requestRevision(id: string, text: string, location?: string): Promise<Run> {

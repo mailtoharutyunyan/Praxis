@@ -20,7 +20,8 @@ public record AgenticProperties(@Valid @NotNull Worker worker, @Valid @NotNull L
 		@Valid @NotNull Gates gates, @Valid @NotNull Security security, @Valid @NotNull Events events,
 		@Valid @NotNull StubStages stubStages, @Valid @NotNull Sandbox sandbox, @Valid @NotNull Scm scm,
 		@Valid @NotNull Models models, @Valid @NotNull Agent agent, @Valid @NotNull Jira jira, @Valid @NotNull Ui ui,
-		@Valid @NotNull @DefaultValue Mcp mcp, @Valid @NotNull @DefaultValue Scan scan) {
+		@Valid @NotNull @DefaultValue Mcp mcp, @Valid @NotNull @DefaultValue Scan scan,
+		@Valid @NotNull @DefaultValue Memory memory) {
 
 	/**
 	 * @param enabled run the background worker on this instance (disable for API-only replicas)
@@ -245,5 +246,14 @@ public record AgenticProperties(@Valid @NotNull Worker worker, @Valid @NotNull L
 			@DefaultValue("true") boolean dependencies,
 			@DefaultValue("ghcr.io/google/osv-scanner:v2.6.0") @NotBlank String dependenciesImage,
 			@DefaultValue("5m") @NotNull Duration timeout) {
+	}
+
+	/**
+	 * Repository memory: facts agents learn about a repository, cited to code, recalled in later runs.
+	 *
+	 * @param enabled give agents the {@code remember} tool and recall active facts into their briefs
+	 * @param retention how long a fact stays active without being used
+	 */
+	public record Memory(@DefaultValue("true") boolean enabled, @DefaultValue("28d") @NotNull Duration retention) {
 	}
 }

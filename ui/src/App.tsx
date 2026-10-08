@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Api } from "./lib/api";
 import { devSession, loadConfig, oidcSession, type Session, type UiConfig } from "./lib/auth";
+import { MemoryPage } from "./pages/MemoryPage";
 import { RunPage } from "./pages/RunPage";
 import { RunsPage } from "./pages/RunsPage";
 
@@ -66,6 +67,7 @@ export function App() {
       <header className="topbar">
         <a className="brand" href="#/">Agentic SDLC <span>runs</span></a>
         <div className="row">
+          {session.signedIn && <a className="small" href="#/memory">Memory</a>}
           {session.signedIn && <span className="muted small">{session.subject} · {session.roles.join(", ") || "no roles"}</span>}
           {session.signedIn
             ? <button onClick={() => void session.signOut()}>Sign out</button>
@@ -76,6 +78,8 @@ export function App() {
         <div className="card"><p>Sign in to see and approve runs.</p></div>
       ) : runMatch ? (
         <RunPage api={api} id={runMatch[1]} token={session.token} roles={session.roles} />
+      ) : path === "/memory" ? (
+        <MemoryPage api={api} canModerate={session.roles.includes("approver")} />
       ) : (
         <RunsPage api={api} canSubmit={session.roles.includes("operator")} navigate={navigate} />
       )}

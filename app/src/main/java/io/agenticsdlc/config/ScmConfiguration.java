@@ -3,6 +3,7 @@ package io.agenticsdlc.config;
 import io.agenticsdlc.adapter.out.scm.ScmHttp;
 import io.agenticsdlc.adapter.out.scm.ScmPullRequests;
 import io.agenticsdlc.core.application.RunCommands;
+import io.agenticsdlc.core.memory.RepoMemory;
 import io.agenticsdlc.core.port.RunStore;
 import io.agenticsdlc.core.scm.ChangePublisher;
 import io.agenticsdlc.core.scm.PublishStage;
@@ -45,8 +46,10 @@ class ScmConfiguration {
 	}
 
 	@Bean
-	PullRequestTracker pullRequestTracker(RunStore store, PullRequests pullRequests, RunCommands commands) {
-		return new PullRequestTracker(store, pullRequests, commands);
+	PullRequestTracker pullRequestTracker(RunStore store, PullRequests pullRequests, RunCommands commands,
+			RepoMemory memory, java.time.Clock clock, AgenticProperties properties) {
+		return new PullRequestTracker(store, pullRequests, commands, properties.memory().enabled() ? memory : null, clock,
+				properties.memory().retention());
 	}
 
 	/** Polls open pull requests; merged ones finish their run, closed ones cancel it. One instance at a time. */

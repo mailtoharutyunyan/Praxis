@@ -13,6 +13,7 @@ import io.agenticsdlc.core.engine.RunLimits;
 import io.agenticsdlc.core.engine.StageContext;
 import io.agenticsdlc.core.engine.StageHandler;
 import io.agenticsdlc.core.engine.StageOutcome;
+import io.agenticsdlc.core.memory.MemoryRecall;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -61,6 +62,22 @@ public final class AgentStages {
 		this(models, workspace, tools, runLimits, loopLimits, Options.NONE);
 	}
 
+	/**
+	 * Learned repository facts (see {@code core.memory}): recalled into each agent's brief, and the {@code remember}
+	 * tool for agents that may store new ones. {@link #NONE} disables both.
+	 */
+	public record Memory(MemoryRecall recall, AgentTool remember) {
+		public static final Memory NONE = new Memory(null, null);
+	}
+
+	private Memory memory = Memory.NONE;
+
+	public AgentStages(AgentModels models, RunWorkspace workspace, SandboxTools tools, RunLimits runLimits,
+			AgentLoop.Limits loopLimits, Options options, Memory memory) {
+		this(models, workspace, tools, runLimits, loopLimits, options);
+		this.memory = Objects.requireNonNull(memory, "memory");
+	}
+
 	public AgentStages(AgentModels models, RunWorkspace workspace, SandboxTools tools, RunLimits runLimits,
 			AgentLoop.Limits loopLimits, Options options) {
 		this.options = Objects.requireNonNull(options, "options");
@@ -104,12 +121,42 @@ public final class AgentStages {
 				});
 	}
 
+	/** What every agent stage starts from: the prepared workspace, the run's history and recalled repository facts. */
+	private record Setup(RunWorkspace.Prepared prepared, RunHistory history, String memory) {
+	}
+
+	/** Recall reads the working copy, so it runs once the sandbox is up. */
+	private Mono<Setup> setUp(StageContext context) {
+		return workspace.prepare(context).flatMap(prepared -> Mono.zip(context.history().map(RunHistory::new),
+				memoryNote(context)).map(t -> new Setup(prepared, t.getT1(), t.getT2())));
+	}
+
+	private Mono<String> memoryNote(StageContext context) {
+		if (memory.recall() == null) {
+			return Mono.just("");
+		}
+		return memory.recall().recall(context).map(facts -> facts.isEmpty() ? "" : "\n\nNotes learned in earlier runs on "
+				+ "this repository, checked against the current code (verify before relying on them):\n"
+				+ Prompts.block("repository_memory", String.join("\n", facts)));
+	}
+
+	/** The role's tools plus {@code remember}, when memory is on. */
+	private List<AgentTool> withMemory(List<AgentTool> roleTools) {
+		if (memory.remember() == null) {
+			return roleTools;
+		}
+		List<AgentTool> all = new java.util.ArrayList<>(roleTools);
+		all.add(memory.remember());
+		return all;
+	}
+
 	Mono<StageOutcome> specify(StageContext context) {
-		return Mono.zip(workspace.prepare(context), context.history().map(RunHistory::new)).flatMap(tuple -> {
-			RunWorkspace.Prepared prepared = tuple.getT1();
-			RunHistory history = tuple.getT2();
+		return setUp(context).flatMap(setup -> {
+			RunWorkspace.Prepared prepared = setup.prepared();
+			RunHistory history = setup.history();
 			StringBuilder brief = new StringBuilder(Prompts.task(context.task()));
 			appendRepository(brief, prepared);
+			brief.append(setup.memory());
 			history.latestChangeRequest().ifPresent(feedback -> {
 				brief.append("\n\nA reviewer rejected the previous specification. Revise it.\n").append(feedback);
 				history.latestArtifact(RunHistory.SPEC).ifPresent(previous -> brief.append(
@@ -125,7 +172,7 @@ public final class AgentStages {
 	}
 
 	private Mono<AgentLoop.Outcome> plan(StageContext context, String brief) {
-		return loop(AgentRole.PLANNER, tools.readOnlyTools(), loopLimits)
+		return loop(AgentRole.PLANNER, withMemory(tools.readOnlyTools()), loopLimits)
 				.run(context, "agent:planner", Prompts.PLANNER, brief, remainingTokens(context));
 	}
 
@@ -171,29 +218,30 @@ public final class AgentStages {
 	}
 
 	Mono<StageOutcome> implement(StageContext context) {
-		return Mono.zip(workspace.prepare(context), context.history().map(RunHistory::new)).flatMap(tuple -> {
-			RunWorkspace.Prepared prepared = tuple.getT1();
-			RunHistory history = tuple.getT2();
+		return setUp(context).flatMap(setup -> {
+			RunWorkspace.Prepared prepared = setup.prepared();
+			RunHistory history = setup.history();
 			boolean firstRound = history.latestArtifactEvent(RunHistory.TESTS).isEmpty()
 					&& history.currentRevision().isEmpty() && history.latestRework().isEmpty();
-			Mono<TestsFirst> tests = options.testsFirst() && firstRound ? writeTests(context, prepared, history)
-					: Mono.just(TestsFirst.NONE);
-			return tests.flatMap(written -> code(context, prepared, history, written));
+			Mono<TestsFirst> tests = options.testsFirst() && firstRound
+					? writeTests(context, prepared, history, setup.memory()) : Mono.just(TestsFirst.NONE);
+			return tests.flatMap(written -> code(context, prepared, history, setup.memory(), written));
 		});
 	}
 
 	private Mono<StageOutcome> code(StageContext context, RunWorkspace.Prepared prepared, RunHistory history,
-			TestsFirst written) {
+			String memoryNote, TestsFirst written) {
 		StringBuilder brief = new StringBuilder(Prompts.task(context.task()));
 		history.latestArtifact(RunHistory.SPEC).ifPresent(spec -> brief.append(
 				"\n\nApproved specification:\n").append(Prompts.block("spec", spec)));
 		appendRepository(brief, prepared);
+		brief.append(memoryNote);
 		history.latestRework().ifPresent(rework -> brief.append("\n\nThis is a follow-up attempt. ")
 				.append(rework).append("\nFix these problems; your earlier changes are still in the workspace."));
 		history.latestChangeRequest().ifPresent(feedback -> brief.append("\n\n").append(feedback));
 		history.currentRevision().ifPresent(revision -> brief.append(Prompts.revision(revision)));
 		brief.append(written.briefForCoder());
-		return loop(AgentRole.CODER, tools.coderTools(), loopLimits)
+		return loop(AgentRole.CODER, withMemory(tools.coderTools()), loopLimits)
 				.run(context, "agent:coder", Prompts.CODER, brief.toString(), remainingTokens(context))
 				.map(outcome -> new AgentLoop.Outcome(outcome.stop(), outcome.finalText(),
 						outcome.usage().plus(written.usage()), outcome.turns()))
@@ -223,11 +271,13 @@ public final class AgentStages {
 	}
 
 	/** Write tests that fail now and pass once the change is made; one retry if they already pass. */
-	private Mono<TestsFirst> writeTests(StageContext context, RunWorkspace.Prepared prepared, RunHistory history) {
+	private Mono<TestsFirst> writeTests(StageContext context, RunWorkspace.Prepared prepared, RunHistory history,
+			String memoryNote) {
 		StringBuilder brief = new StringBuilder(Prompts.task(context.task()));
 		history.latestArtifact(RunHistory.SPEC).ifPresent(spec -> brief.append(
 				"\n\nApproved specification:\n").append(Prompts.block("spec", spec)));
 		appendRepository(brief, prepared);
+		brief.append(memoryNote);
 		return writeTests(context, prepared, brief.toString(), Usage.ZERO, 1);
 	}
 
@@ -301,14 +351,14 @@ public final class AgentStages {
 	}
 
 	Mono<StageOutcome> review(StageContext context) {
-		return Mono.zip(workspace.prepare(context), context.history().map(RunHistory::new), workspace.diff(context))
-				.flatMap(tuple -> testsNote(context, tuple.getT2()).flatMap(testsNote -> {
-					RunHistory history = tuple.getT2();
-					String diff = tuple.getT3();
+		return setUp(context).flatMap(setup -> workspace.diff(context).flatMap(diff -> testsNote(context, setup.history())
+				.flatMap(testsNote -> {
+					RunHistory history = setup.history();
 					StringBuilder brief = new StringBuilder(Prompts.task(context.task()));
 					history.latestArtifact(RunHistory.SPEC).ifPresent(spec -> brief.append(
 							"\n\nSpecification:\n").append(Prompts.block("spec", spec)));
-					appendRepository(brief, tuple.getT1());
+					appendRepository(brief, setup.prepared());
+					brief.append(setup.memory());
 					history.currentRevision().ifPresent(revision -> brief.append(Prompts.revision(revision))
 							.append("\nCheck that the changes address this request."));
 					brief.append(testsNote);
@@ -317,7 +367,7 @@ public final class AgentStages {
 									.append(Prompts.block("scan", scan)).append("\nWeigh these in your review."));
 					brief.append("\n\nReview the current changes (show_diff).");
 					return artifact(context, RunHistory.DIFF, diff, Map.of(RunHistory.FINGERPRINT, RunHistory.fingerprint(diff)))
-							.then(loop(AgentRole.REVIEWER, tools.readOnlyTools(), loopLimits)
+							.then(loop(AgentRole.REVIEWER, withMemory(tools.readOnlyTools()), loopLimits)
 									.run(context, "agent:reviewer", Prompts.REVIEWER, brief.toString(),
 											remainingTokens(context)))
 							.flatMap(outcome -> {
@@ -330,7 +380,7 @@ public final class AgentStages {
 										.thenReturn(approved ? completed(outcome, Map.of("verdict", label))
 												: new StageOutcome.NeedsRework(outcome.finalText(), outcome.usage()));
 							});
-				}));
+				})));
 	}
 
 	/** The reviewer approves only with {@code VERDICT: APPROVE} as the last non-blank line of its reply. */
