@@ -1,13 +1,14 @@
 # How the Agentic SDLC sandbox builds and tests this repository (ADR-0006).
 # The app module's integration tests need Docker (Testcontainers), which sandboxes deliberately do not have, so the
-# sandbox runs the core tests and compiles the app; CI runs the full `./mvnw verify`.
+# sandbox runs the core tests, the app's architecture rules (ArchUnit needs no Docker) and compiles the app; CI runs
+# the full `./mvnw verify`.
 services:
   - name: java
     path: .
     image: maven:3.9-eclipse-temurin-25
     setup: ./mvnw -B -ntp -q -DskipTests -Djacoco.skip=true install
     build: ./mvnw -B -ntp -q -DskipTests -Djacoco.skip=true install
-    test: ./mvnw -B -ntp -pl core verify && ./mvnw -B -ntp -pl app -DskipTests -Djacoco.skip=true package
+    test: ./mvnw -B -ntp -pl core verify && ./mvnw -B -ntp -pl app -Djacoco.skip=true -Dtest=ArchitectureTest -Dsurefire.failIfNoSpecifiedTests=false package
   - name: ui
     path: ui
     image: node:24-bookworm

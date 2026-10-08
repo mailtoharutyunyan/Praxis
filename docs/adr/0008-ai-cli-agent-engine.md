@@ -77,7 +77,7 @@ Facts this design rests on, checked against the Claude Code docs (code.claude.co
   - Claude only.
   - The CLI is a moving dependency. We pin a version and use flags from 2.1.259 or later.
   - Its stream format is less granular than our own loop's events. We record no stuck detection, only the turn limit.
-  - The repository memory's `remember` tool is not available on this engine. Recalled facts still reach the brief.
+  - Repository memory: the CLI has no `remember` tool, so it writes facts as JSON lines to `memory.jsonl` in its scratch directory (the one file a read-only call may write), and the engine stores each through the `remember` tool afterwards, with the same citation check and per-run limit. Added after the first live runs (2026-10-09) showed an empty Memory page.
   - The cost of a call killed for its token budget is unknown; its tokens still count.
   - One binary serves every sandbox, so glibc and Alpine (musl) toolchain images cannot be mixed. A musl build needs `libgcc`, `libstdc++` and `ripgrep` in the image.
 - Follow-ups:
