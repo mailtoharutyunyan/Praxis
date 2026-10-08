@@ -1,0 +1,45 @@
+# Local Jira Data Center for integration testing.
+#   docker compose -f dev/jira/compose.yaml -p agentic-jira up -d      → http://localhost:8090
+# The database is configured here, so the setup wizard starts at the license step. For throwaway local testing use
+# Atlassian's 3-hour "timebomb" Data Center license:
+# https://developer.atlassian.com/platform/marketplace/timebomb-licenses-for-testing-server-apps/
+# The app reaches this Jira at http://localhost:8090; Jira reaches the app's webhook at http://host.docker.internal:8080.
+services:
+  jira-db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: jira
+      POSTGRES_USER: jira
+      POSTGRES_PASSWORD: jira-dev-only
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --lc-collate=C --lc-ctype=C"
+    volumes:
+      - jira-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U jira -d jira"]
+      interval: 5s
+      retries: 20
+  jira:
+    image: atlassian/jira-software:11.3.12
+    depends_on:
+      jira-db:
+        condition: service_healthy
+    ports:
+      - "8090:8080"
+    environment:
+      JVM_MINIMUM_MEMORY: 1024m
+      JVM_MAXIMUM_MEMORY: 2048m
+      ATL_PROXY_NAME: localhost
+      ATL_PROXY_PORT: "8090"
+      ATL_TOMCAT_SCHEME: http
+      ATL_JDBC_URL: jdbc:postgresql://jira-db:5432/jira
+      ATL_JDBC_USER: jira
+      ATL_JDBC_PASSWORD: jira-dev-only
+      ATL_DB_DRIVER: org.postgresql.Driver
+      ATL_DB_TYPE: postgres72
+    volumes:
+      - jira-home:/var/atlassian/application-data/jira
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+volumes:
+  jira-db:
+  jira-home:

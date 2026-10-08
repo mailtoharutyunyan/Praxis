@@ -152,8 +152,9 @@ public record AgenticProperties(@Valid @NotNull Worker worker, @Valid @NotNull L
 	}
 
 	/**
-	 * Jira intake and status comments (Jira Cloud REST v3).
+	 * Jira intake and status comments.
 	 *
+	 * @param deployment {@code cloud} (REST v3, ADF, email + API token) or {@code data-center} (REST v2, PAT)
 	 * @param email Atlassian account email for Basic auth; blank sends {@code apiToken} as a Bearer PAT (Data Center)
 	 * @param webhookSecret secret of the Jira admin webhook; requests must carry a matching {@code X-Hub-Signature}
 	 * @param automationToken shared secret Jira Automation "Send web request" rules send in
@@ -162,7 +163,9 @@ public record AgenticProperties(@Valid @NotNull Worker worker, @Valid @NotNull L
 	 * @param projects Jira project key → repository the work goes to
 	 * @param runLinkBase prefix for links to a run in comments (the UI), e.g. https://agentic.example.com/runs/
 	 */
-	public record Jira(@DefaultValue("false") boolean enabled, @DefaultValue("") String baseUrl,
+	public record Jira(@DefaultValue("false") boolean enabled,
+			@DefaultValue("cloud") @jakarta.validation.constraints.Pattern(regexp = "cloud|data-center") String deployment,
+			@DefaultValue("") String baseUrl,
 			@DefaultValue("") String email, @DefaultValue("") String apiToken, @DefaultValue("") String webhookSecret,
 			@DefaultValue("") String automationToken, @DefaultValue("agentic") @NotBlank String triggerLabel,
 			@DefaultValue({}) java.util.Map<String, @Valid JiraProject> projects, @DefaultValue("") String runLinkBase,

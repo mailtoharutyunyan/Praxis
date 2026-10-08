@@ -36,7 +36,8 @@ class JiraConfiguration {
 		if (jira.webhookSecret().isBlank() && jira.automationToken().isBlank()) {
 			throw new IllegalStateException("set agentic.jira.webhook-secret or agentic.jira.automation-token");
 		}
-		return new JiraTicketSystem(webClient, jira.baseUrl(), jira.email(), jira.apiToken(), Duration.ofSeconds(30));
+		return new JiraTicketSystem(webClient, jira.baseUrl(), jira.email(), jira.apiToken(), Duration.ofSeconds(30),
+				!"data-center".equals(jira.deployment()));
 	}
 
 	@Bean

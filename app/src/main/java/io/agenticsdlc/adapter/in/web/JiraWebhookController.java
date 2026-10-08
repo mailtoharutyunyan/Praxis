@@ -88,7 +88,9 @@ class JiraWebhookController {
 		}
 		String eventId = deliveryId != null && !deliveryId.isBlank() ? deliveryId
 				: event.path("timestamp").asString(String.valueOf(System.currentTimeMillis()));
-		return new TicketIntake.Trigger(key, eventId, event.path("user").path("accountId").asString(null));
+		// Cloud identifies users by accountId; Data Center by username.
+		JsonNode user = event.path("user");
+		return new TicketIntake.Trigger(key, eventId, user.path("accountId").asString(user.path("name").asString(null)));
 	}
 
 	private TicketIntake.Trigger fromAutomation(JsonNode event) {

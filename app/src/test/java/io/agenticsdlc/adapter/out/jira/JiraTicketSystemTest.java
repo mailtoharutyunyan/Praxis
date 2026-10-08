@@ -81,6 +81,24 @@ class JiraTicketSystemTest {
 	}
 
 	@Test
+	void dataCenterUsesRestV2WithPlainStrings() throws Exception {
+		try (FakeScmServer dc = new FakeScmServer()
+				.on("GET", "/rest/api/2/issue/SHOP-8", r -> new FakeScmServer.Response(200, """
+						{"key":"SHOP-8","fields":{"summary":"S","labels":["agentic"],"project":{"key":"SHOP"},
+						 "description":"h2. Goal\\nPlain *wiki* text"}}"""))
+				.on("POST", "/rest/api/2/issue/SHOP-8/comment", r -> new FakeScmServer.Response(201, "{}"))) {
+			JiraTicketSystem system = new JiraTicketSystem(WebClient.builder(), dc.url(), "", "pat", Duration.ofSeconds(5),
+					false);
+			assertThat(system.fetch("SHOP-8").block().description()).isEqualTo("h2. Goal\nPlain *wiki* text");
+			system.comment("SHOP-8", "Run started.", "http://x/#/runs/1").block();
+			var post = dc.requests.getLast();
+			assertThat(post.header("Authorization")).isEqualTo("Bearer pat");
+			assertThat(JsonMapper.builder().build().readTree(post.body()).path("body").asString())
+					.isEqualTo("Run started.\nhttp://x/#/runs/1");
+		}
+	}
+
+	@Test
 	void rejectsKeysThatAreNotIssueKeys() {
 		JiraTicketSystem system = new JiraTicketSystem(WebClient.builder(), jira.url(), "", "pat", Duration.ofSeconds(5));
 		assertThatThrownBy(() -> system.fetch("../../admin")).isInstanceOf(IllegalArgumentException.class);

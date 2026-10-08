@@ -20,8 +20,11 @@ import reactor.util.retry.Retry;
 import tools.jackson.databind.JsonNode;
 
 /**
- * Jira Cloud REST API v3: reads issues (description in ADF, converted to text) and posts plain-text comments as ADF.
- * Authentication is Basic with an Atlassian account email and API token (Cloud), or a Bearer personal access token.
+ * Jira REST client for both deployments:
+ * <ul>
+ * <li>Cloud: REST v3, descriptions and comments in Atlassian Document Format; Basic auth with email + API token.</li>
+ * <li>Data Center: REST v2, descriptions and comments are strings (wiki markup); Bearer personal access token.</li>
+ * </ul>
  */
 public class JiraTicketSystem implements TicketSystem {
 
@@ -29,11 +32,19 @@ public class JiraTicketSystem implements TicketSystem {
 	private final String baseUrl;
 	private final String authorization;
 	private final Duration timeout;
+	private final boolean cloud;
+
+	/** Jira Cloud (REST v3, ADF). */
+	public JiraTicketSystem(WebClient.Builder builder, String baseUrl, String email, String apiToken, Duration timeout) {
+		this(builder, baseUrl, email, apiToken, timeout, true);
+	}
 
 	/**
 	 * @param email Atlassian account email for Basic auth; blank to send {@code apiToken} as a Bearer token instead
+	 * @param cloud true for Jira Cloud (REST v3, ADF), false for Data Center (REST v2, plain strings)
 	 */
-	public JiraTicketSystem(WebClient.Builder builder, String baseUrl, String email, String apiToken, Duration timeout) {
+	public JiraTicketSystem(WebClient.Builder builder, String baseUrl, String email, String apiToken, Duration timeout,
+			boolean cloud) {
 		if (apiToken == null || apiToken.isBlank()) {
 			throw new IllegalArgumentException("Jira API token is required (agentic.jira.api-token)");
 		}
@@ -42,12 +53,17 @@ public class JiraTicketSystem implements TicketSystem {
 		this.authorization = email == null || email.isBlank() ? "Bearer " + apiToken
 				: "Basic " + Base64.getEncoder().encodeToString((email + ":" + apiToken).getBytes(StandardCharsets.UTF_8));
 		this.timeout = timeout;
+		this.cloud = cloud;
+	}
+
+	private String api() {
+		return baseUrl + (cloud ? "/rest/api/3" : "/rest/api/2");
 	}
 
 	@Override
 	public Mono<Ticket> fetch(String key) {
 		requireKey(key);
-		URI uri = URI.create(baseUrl + "/rest/api/3/issue/" + key + "?fields=summary,description,labels,project");
+		URI uri = URI.create(api() + "/issue/" + key + "?fields=summary,description,labels,project");
 		return call(client.get().uri(uri).header(HttpHeaders.AUTHORIZATION, authorization)
 				.accept(MediaType.APPLICATION_JSON).retrieve().bodyToMono(JsonNode.class))
 				.map(issue -> {
@@ -63,6 +79,14 @@ public class JiraTicketSystem implements TicketSystem {
 	@Override
 	public Mono<Void> comment(String key, String text, String link) {
 		requireKey(key);
+		URI uri = URI.create(api() + "/issue/" + key + "/comment");
+		Object body = cloud ? adfComment(text, link) : Map.of("body", link == null ? text : text + "\n" + link);
+		return call(client.post().uri(uri).header(HttpHeaders.AUTHORIZATION, authorization)
+				.contentType(MediaType.APPLICATION_JSON).accept(MediaType.APPLICATION_JSON).bodyValue(body).retrieve()
+				.bodyToMono(JsonNode.class)).then();
+	}
+
+	private static Map<String, Object> adfComment(String text, String link) {
 		List<Object> inline = new ArrayList<>();
 		inline.add(Map.of("type", "text", "text", text));
 		if (link != null) {
@@ -70,12 +94,8 @@ public class JiraTicketSystem implements TicketSystem {
 			inline.add(Map.of("type", "text", "text", link, "marks",
 					List.of(Map.of("type", "link", "attrs", Map.of("href", link)))));
 		}
-		Map<String, Object> body = Map.of("body", Map.of("type", "doc", "version", 1, "content",
+		return Map.of("body", Map.of("type", "doc", "version", 1, "content",
 				List.of(Map.of("type", "paragraph", "content", inline))));
-		URI uri = URI.create(baseUrl + "/rest/api/3/issue/" + key + "/comment");
-		return call(client.post().uri(uri).header(HttpHeaders.AUTHORIZATION, authorization)
-				.contentType(MediaType.APPLICATION_JSON).accept(MediaType.APPLICATION_JSON).bodyValue(body).retrieve()
-				.bodyToMono(JsonNode.class)).then();
 	}
 
 	/** Issue keys are PROJECT-123; validating them keeps webhook input out of the URL path. */
