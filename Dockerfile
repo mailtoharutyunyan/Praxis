@@ -7,7 +7,7 @@
 # See "Deployment" in README.md for the Docker access and workspace volume the container needs, or run the whole
 # stack with `docker compose up -d --build` (compose.yaml).
 
-FROM node:24.21.0-alpine AS ui
+FROM node:26.10.0-alpine AS ui
 WORKDIR /src/ui
 COPY ui/package.json ui/package-lock.json ./
 RUN npm ci --no-audit --no-fund
