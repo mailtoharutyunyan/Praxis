@@ -64,6 +64,10 @@ agentic:
   scm:
     allowed-hosts: [github.com, gitlab.com, bitbucket.org, dev.azure.com]
     clone-depth: 1
+    draft-pull-requests: false
+    pull-request-poll-interval: 2m
+    # api-urls:                       # only for GitHub Enterprise / self-managed GitLab
+    #   "[ghe.corp.example]": https://ghe.corp.example/api/v3
   agent:
     enabled: true
     max-turns: 60

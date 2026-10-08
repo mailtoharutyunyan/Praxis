@@ -45,6 +45,18 @@ class ArchitectureTest {
 			.that().resideInAPackage("io.agenticsdlc.adapter.out..")
 			.should().dependOnClassesThat().resideInAPackage("io.agenticsdlc.adapter.in..");
 
+	/** ADR-0003, Rule of Two: what the model drives can never push, open pull requests or write to tickets. */
+	@ArchTest
+	static final ArchRule agentsCannotReachPublishing = noClasses()
+			.that().resideInAnyPackage("io.agenticsdlc.core.agent..", "io.agenticsdlc.core.stage..")
+			.should().dependOnClassesThat().resideInAnyPackage("io.agenticsdlc.core.scm..", "io.agenticsdlc.core.intake..");
+
+	@ArchTest
+	static final ArchRule modelAdaptersCannotReachScm = noClasses()
+			.that().resideInAPackage("io.agenticsdlc.adapter.out.llm..")
+			.should().dependOnClassesThat().resideInAnyPackage("io.agenticsdlc.adapter.out.scm..",
+					"io.agenticsdlc.adapter.out.git..", "io.agenticsdlc.core.scm..");
+
 	@ArchTest
 	static final ArchRule productionCodeLivesInKnownLayers = classes()
 			.that().resideOutsideOfPackages("io.agenticsdlc.core..", "io.agenticsdlc.adapter..",

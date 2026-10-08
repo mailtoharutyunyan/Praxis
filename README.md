@@ -2,7 +2,7 @@
 
 Turns a task (a prompt, a Jira ticket, or another source) into a reviewed pull request. An agent plans the work, implements it in an isolated Docker sandbox, runs the build and tests, and reviews its own changes. Humans approve at gates whose number scales with the task's risk. A human always approves the push, and merging is never automated.
 
-> Status: **M4 (agent stages: triage, spec, implement, verify, review)**. See [the roadmap](#roadmap).
+> Status: **M5 (publishing to GitHub, GitLab, Bitbucket, Azure DevOps)**. See [the roadmap](#roadmap).
 
 ## Stack
 - Java 25 (LTS), Spring Boot 4.1.1, Spring WebFlux, Project Reactor
@@ -136,6 +136,23 @@ Limits:
 
 Gates show the latest artifacts (`GET /api/v1/runs/{id}/events`, `ARTIFACT_PRODUCED`). Text from tickets and issues is passed to models as data, wrapped in `<task>`, with an explicit instruction to ignore embedded commands. A janitor removes the sandboxes and working copies of finished runs.
 
+## Publishing and pull requests
+Only after a human approves the PUBLISH gate does the PUBLISHING stage:
+1. commit the working copy to `agent/<run-id>` (author set by `agentic.scm.author-name` / `author-email`);
+2. push it from the host;
+3. open a pull request (a merge request on GitLab) that carries the task, spec and automated review.
+
+Both steps are idempotent: a retry finds the existing branch and pull request. The run then waits in `PR_OPEN`. A watcher polls the provider (`agentic.scm.pull-request-poll-interval`): a merged PR completes the run (`DONE`), and one closed without merging cancels it. Merging is always done by people in the provider's UI.
+
+| Provider | Clone URL form | Token (`agentic.scm.tokens."[host]"`) |
+|---|---|---|
+| GitHub / GitHub Enterprise | `https://github.com/{owner}/{repo}.git` | Fine-grained PAT or GitHub App token. Needs contents write and pull requests write. |
+| GitLab / self-managed | `https://gitlab.com/{group}/{sub}/{project}.git` | Project or personal access token with the `api` scope |
+| Bitbucket Cloud | `https://bitbucket.org/{workspace}/{repo}.git` | Repository, project or workspace access token. App passwords were removed in 2026. |
+| Azure DevOps (incl. `*.visualstudio.com`) | `https://dev.azure.com/{org}/{project}/_git/{repo}` | Organization-scoped PAT with Code (read & write) |
+
+For GitHub Enterprise or self-managed GitLab, set `agentic.scm.api-urls."[host]"`. Setting `agentic.scm.draft-pull-requests=true` opens drafts.
+
 ## API (v1)
 All endpoints need a bearer JWT from your OIDC provider (`spring.security.oauth2.resourceserver.jwt.issuer-uri`). Roles are read from the `roles` claim, configurable with `agentic.security.roles-claim` (Keycloak: `realm_access.roles`). Errors are RFC 9457 problem details.
 
@@ -161,7 +178,7 @@ Operations: `/actuator/health/{liveness,readiness}` and `/actuator/prometheus`, 
 | **M2** ✅ | Docker sandbox, JGit clone, build/test detection |
 | **M3** ✅ | Spring AI model registry (per-role provider/model), tool loop with budgets |
 | **M4** ✅ | Triage → context → spec → implement ⇄ verify → review, all gates |
-| M5 | SCM providers: GitHub, GitLab, Bitbucket, Azure DevOps (branch push + PR) |
+| **M5** ✅ | SCM providers: GitHub, GitLab, Bitbucket, Azure DevOps (branch push + PR) |
 | M6 | Jira intake (webhook + REST) and status comments |
 | M7 | Evaluation harness built from historical tickets |
 | M8 | Web UI |

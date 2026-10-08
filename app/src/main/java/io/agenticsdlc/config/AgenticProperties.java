@@ -93,10 +93,16 @@ public record AgenticProperties(@Valid @NotNull Worker worker, @Valid @NotNull L
 	 * @param tokens access token per host, e.g. {@code agentic.scm.tokens.[github.com]=${GITHUB_TOKEN}}; never logged
 	 * @param mirrors URL prefix rewrites like git's {@code insteadOf}, e.g. to an internal mirror
 	 * @param cloneDepth 0 for full history; shallow clones are much faster on large repositories
+	 * @param apiUrls REST API base per host when not the provider default (GitHub Enterprise, self-managed GitLab)
+	 * @param authorName commit author for agent changes
+	 * @param draftPullRequests open pull requests as drafts
 	 */
 	public record Scm(@DefaultValue({ "github.com", "gitlab.com", "bitbucket.org", "dev.azure.com" }) List<String> allowedHosts,
 			@DefaultValue({}) java.util.Map<String, String> tokens, @DefaultValue({}) java.util.Map<String, String> mirrors,
-			@DefaultValue("1") @Min(0) int cloneDepth) {
+			@DefaultValue("1") @Min(0) int cloneDepth, @DefaultValue({}) java.util.Map<String, String> apiUrls,
+			@DefaultValue("Agentic SDLC") @NotBlank String authorName,
+			@DefaultValue("agentic-sdlc@noreply.invalid") @NotBlank String authorEmail,
+			@DefaultValue("false") boolean draftPullRequests, @DefaultValue("2m") @NotNull Duration pullRequestPollInterval) {
 	}
 
 	/**

@@ -3,6 +3,7 @@ package io.agenticsdlc.adapter.out.git;
 import io.agenticsdlc.config.WorkspacePaths;
 import io.agenticsdlc.core.domain.RunView;
 import io.agenticsdlc.core.domain.ScmKind;
+import io.agenticsdlc.core.scm.ChangePublisher;
 import io.agenticsdlc.core.workspace.CheckoutInfo;
 import io.agenticsdlc.core.workspace.ProjectConfig;
 import io.agenticsdlc.core.workspace.RepositoryCheckout;
@@ -26,6 +27,7 @@ import org.eclipse.jgit.diff.DiffFormatter;
 import org.eclipse.jgit.dircache.DirCacheIterator;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.ObjectReader;
+import org.eclipse.jgit.lib.PersonIdent;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.lib.StoredConfig;
 import org.eclipse.jgit.revwalk.RevWalk;
@@ -47,7 +49,7 @@ import reactor.core.scheduler.Schedulers;
  * host where credentials live. Base branch and commit are recorded in the git config to keep {@link #checkout}
  * idempotent.
  */
-public class JGitRepositoryCheckout implements RepositoryCheckout {
+public class JGitRepositoryCheckout implements RepositoryCheckout, ChangePublisher {
 
 	private static final Logger log = LoggerFactory.getLogger(JGitRepositoryCheckout.class);
 	private static final String SECTION = "agentic";
@@ -58,13 +60,60 @@ public class JGitRepositoryCheckout implements RepositoryCheckout {
 	private final Map<String, String> tokensByHost;
 	private final Map<String, String> mirrors;
 	private final int cloneDepth;
+	private final PersonIdent author;
 
 	public JGitRepositoryCheckout(WorkspacePaths paths, Map<String, String> tokensByHost, Map<String, String> mirrors,
 			int cloneDepth) {
+		this(paths, tokensByHost, mirrors, cloneDepth, "Agentic SDLC", "agentic-sdlc@noreply.invalid");
+	}
+
+	public JGitRepositoryCheckout(WorkspacePaths paths, Map<String, String> tokensByHost, Map<String, String> mirrors,
+			int cloneDepth, String authorName, String authorEmail) {
 		this.paths = paths;
 		this.tokensByHost = Map.copyOf(tokensByHost);
 		this.mirrors = Map.copyOf(mirrors);
 		this.cloneDepth = cloneDepth;
+		this.author = new PersonIdent(authorName, authorEmail);
+	}
+
+	@Override
+	public Mono<PushedBranch> commitAndPush(RunView view, String message) {
+		return Mono.fromCallable(() -> commitAndPushBlocking(view, message)).subscribeOn(Schedulers.boundedElastic());
+	}
+
+	private PushedBranch commitAndPushBlocking(RunView view, String message) throws IOException, GitAPIException {
+		UUID runId = view.run().id();
+		try (Repository repository = open(runId); Git git = new Git(repository)) {
+			String workBranch = "agent/" + runId;
+			if (!workBranch.equals(repository.getBranch())) {
+				throw new IllegalStateException("working copy of run " + runId + " is not on " + workBranch);
+			}
+			git.add().addFilepattern(".").call();
+			git.add().addFilepattern(".").setUpdate(true).call();
+			if (!git.status().call().isClean()) {
+				PersonIdent now = new PersonIdent(author, java.time.Instant.now());
+				git.commit().setMessage(message).setAuthor(now).setCommitter(now).setSign(false).setNoVerify(true).call();
+			}
+			String commit = repository.resolve("HEAD").name();
+			String url = rewrite(view.task().repository().cloneUrl().toString());
+			Iterable<org.eclipse.jgit.transport.PushResult> results = git.push()
+					.setRemote(url)
+					.setRefSpecs(new org.eclipse.jgit.transport.RefSpec("refs/heads/" + workBranch + ":refs/heads/" + workBranch))
+					.setCredentialsProvider(credentials(view.task().repository().kind(), url))
+					.call();
+			for (org.eclipse.jgit.transport.PushResult result : results) {
+				for (org.eclipse.jgit.transport.RemoteRefUpdate update : result.getRemoteUpdates()) {
+					var status = update.getStatus();
+					if (status != org.eclipse.jgit.transport.RemoteRefUpdate.Status.OK
+							&& status != org.eclipse.jgit.transport.RemoteRefUpdate.Status.UP_TO_DATE) {
+						throw new IllegalStateException("push of " + workBranch + " was rejected: " + status
+								+ (update.getMessage() == null ? "" : " (" + update.getMessage() + ")"));
+					}
+				}
+			}
+			log.info("pushed {} at {} for run {}", workBranch, commit, runId);
+			return new PushedBranch(workBranch, repository.getConfig().getString(SECTION, null, "baseBranch"), commit);
+		}
 	}
 
 	@Override

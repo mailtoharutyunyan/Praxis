@@ -71,6 +71,27 @@ public final class RunCommands {
 		return change(runId, (view, now) -> new Change(view.run().resume(now), List.of()), actor);
 	}
 
+	/** The run's pull request was merged (→ DONE) or closed without merging (→ CANCELLED). */
+	public Mono<Run> closePullRequest(UUID runId, boolean merged, String actor) {
+		return change(runId, (view, now) -> {
+			if (view.run().state() != RunState.PR_OPEN) {
+				throw new IllegalStateException("run " + runId + " has no open pull request");
+			}
+			Run next = view.run().transitionTo(merged ? RunState.DONE : RunState.CANCELLED, now);
+			Map<String, Object> payload = new LinkedHashMap<>();
+			if (merged) {
+				payload.put("stage", RunState.PR_OPEN.name());
+				payload.put("outcome", "Merged");
+			}
+			else {
+				payload.put("kind", "PULL_REQUEST_CLOSED");
+				payload.put("reason", "the pull request was closed without merging");
+			}
+			return new Change(next, List.of(event(runId, merged ? RunEventType.STAGE_COMPLETED : RunEventType.ERROR,
+					actor, payload, now)));
+		}, actor);
+	}
+
 	public Mono<Run> raiseRisk(UUID runId, RiskLevel risk, String reason, String actor) {
 		Objects.requireNonNull(risk, "risk");
 		return change(runId, (view, now) -> {

@@ -49,10 +49,12 @@ class WorkspaceConfiguration {
 		return DockerClientImpl.getInstance(config, http);
 	}
 
+	/** Also the {@code ChangePublisher}: the same host-side git setup clones and pushes. */
 	@Bean
-	RepositoryCheckout repositoryCheckout(WorkspacePaths paths, AgenticProperties properties) {
+	JGitRepositoryCheckout repositoryCheckout(WorkspacePaths paths, AgenticProperties properties) {
 		AgenticProperties.Scm scm = properties.scm();
-		return new JGitRepositoryCheckout(paths, scm.tokens(), scm.mirrors(), scm.cloneDepth());
+		return new JGitRepositoryCheckout(paths, scm.tokens(), scm.mirrors(), scm.cloneDepth(), scm.authorName(),
+				scm.authorEmail());
 	}
 
 	@Bean
