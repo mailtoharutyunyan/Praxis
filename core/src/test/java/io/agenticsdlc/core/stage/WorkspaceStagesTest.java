@@ -17,6 +17,7 @@ import io.agenticsdlc.core.workspace.ProjectConfig;
 import io.agenticsdlc.core.workspace.RepositoryCheckout;
 import io.agenticsdlc.core.workspace.Sandbox;
 import io.agenticsdlc.core.workspace.SandboxSpec;
+import io.agenticsdlc.core.workspace.SecurityScanner;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -107,12 +108,39 @@ class WorkspaceStagesTest {
 	}
 
 	@Test
+	void blockingScanFindingsSendTheRunBackAndAdvisoryOnesAreRecorded() {
+		SecurityScanner.Finding secret = new SecurityScanner.Finding("gitleaks", "HIGH", "App.java", 3, "aws-access-token",
+				"possible secret", true);
+		SecurityScanner.Finding vulnerable = new SecurityScanner.Finding("osv-scanner", "CRITICAL", "pom.xml", 0,
+				"CVE-2021-44228", "log4j-core@2.14.1 has a known vulnerability", false);
+		List<List<String>> scanned = new java.util.ArrayList<>();
+
+		StageOutcome blocked = new VerifyStage(workspace, (runId, files) -> {
+			scanned.add(files);
+			return Mono.just(new SecurityScanner.Report(List.of(secret, vulnerable), List.of()));
+		}).execute(context).block();
+		assertThat(blocked).isInstanceOfSatisfying(StageOutcome.NeedsRework.class, r -> assertThat(r.reason())
+				.contains("must not be published", "App.java:3", "never commit secrets"));
+
+		StageOutcome advisory = new VerifyStage(workspace, (runId, files) -> Mono.just(new SecurityScanner.Report(
+				List.of(vulnerable), List.of("note")))).execute(context).block();
+		assertThat(advisory).isInstanceOf(StageOutcome.Completed.class);
+		assertThat(new RunHistory(store.allEvents(context.run().id())).latestArtifact(VerifyStage.SCAN))
+				.hasValueSatisfying(scan -> assertThat(scan).contains("[CRITICAL] pom.xml", "CVE-2021-44228", "_note_"));
+
+		StageOutcome broken = new VerifyStage(workspace, (runId, files) -> Mono.error(new IllegalStateException("no docker")))
+				.execute(context).block();
+		assertThat(broken).as("a scanner failure does not block the run").isInstanceOf(StageOutcome.Completed.class);
+		assertThat(scanned).isNotEmpty();
+	}
+
+	@Test
 	void eventsCarryCommandResults() {
 		new VerifyStage(workspace).execute(context).block();
 		List<RunEvent> log = store.allEvents(context.run().id());
 		assertThat(log.getLast().type()).isEqualTo(RunEventType.ARTIFACT_PRODUCED);
 		assertThat(log.getLast().payload()).containsEntry("kind", RunHistory.DIFF);
-		RunEvent last = log.get(log.size() - 2);
+		RunEvent last = log.stream().filter(e -> e.type() == RunEventType.COMMAND_OUTPUT).reduce((a, b) -> b).orElseThrow();
 		assertThat(last.actor()).isEqualTo(RunWorkspace.ACTOR);
 		assertThat(last.payload()).containsEntry("command", "./mvnw -B -ntp verify").containsEntry("exitCode", 0);
 	}

@@ -312,6 +312,9 @@ public final class AgentStages {
 					history.currentRevision().ifPresent(revision -> brief.append(Prompts.revision(revision))
 							.append("\nCheck that the changes address this request."));
 					brief.append(testsNote);
+					history.latestArtifact(VerifyStage.SCAN).filter(scan -> !scan.startsWith("No findings")).ifPresent(scan ->
+							brief.append("\n\nAutomated security scans of the changed files reported:\n")
+									.append(Prompts.block("scan", scan)).append("\nWeigh these in your review."));
 					brief.append("\n\nReview the current changes (show_diff).");
 					return artifact(context, RunHistory.DIFF, diff, Map.of(RunHistory.FINGERPRINT, RunHistory.fingerprint(diff)))
 							.then(loop(AgentRole.REVIEWER, tools.readOnlyTools(), loopLimits)

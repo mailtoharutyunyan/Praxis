@@ -116,6 +116,9 @@ public final class PublishStage implements StageHandler {
 		history.latestArtifact(RunHistory.SPEC)
 				.ifPresent(spec -> body.append("<details><summary>Specification</summary>\n\n").append(abbreviate(spec, 20_000))
 						.append("\n\n</details>\n\n"));
+		history.latestArtifact(io.agenticsdlc.core.stage.VerifyStage.SCAN)
+				.ifPresent(scan -> body.append("<details><summary>Security scans</summary>\n\n").append(abbreviate(scan, 10_000))
+						.append("\n\n</details>\n\n"));
 		history.latestArtifact(RunHistory.REVIEW)
 				.ifPresent(review -> body.append("<details><summary>Automated review</summary>\n\n")
 						.append(abbreviate(review, 20_000)).append("\n\n</details>\n\n"));

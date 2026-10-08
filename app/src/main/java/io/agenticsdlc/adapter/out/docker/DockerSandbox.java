@@ -333,7 +333,17 @@ public class DockerSandbox implements Sandbox {
 		return -1;
 	}
 
-	private void pullIfMissing(String image) {
+	/** The non-root uid:gid sandboxes run as; scanners use it too. */
+	String user() {
+		return user;
+	}
+
+	/** Proxy environment for containers on the sandbox network; empty without an egress proxy. */
+	List<String> proxyEnvironment() {
+		return proxy == null ? List.of() : proxyEnvironment(proxy, settings.noProxy());
+	}
+
+	void pullIfMissing(String image) {
 		try {
 			docker.inspectImageCmd(image).exec();
 		}

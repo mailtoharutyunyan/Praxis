@@ -6,6 +6,7 @@ import com.github.dockerjava.core.DockerClientConfig;
 import com.github.dockerjava.core.DockerClientImpl;
 import com.github.dockerjava.zerodep.ZerodepDockerHttpClient;
 import io.agenticsdlc.adapter.out.docker.DockerSandbox;
+import io.agenticsdlc.adapter.out.docker.DockerSecurityScanner;
 import io.agenticsdlc.adapter.out.docker.SandboxJanitor;
 import io.agenticsdlc.adapter.out.git.JGitRepositoryCheckout;
 import io.agenticsdlc.core.port.RunStore;
@@ -14,12 +15,14 @@ import io.agenticsdlc.core.stage.RunWorkspace;
 import io.agenticsdlc.core.stage.VerifyStage;
 import io.agenticsdlc.core.workspace.RepositoryCheckout;
 import io.agenticsdlc.core.workspace.Sandbox;
+import io.agenticsdlc.core.workspace.SecurityScanner;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.time.Duration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBooleanProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import tools.jackson.databind.json.JsonMapper;
 
 /** Real workspace stages: JGit checkout on the host plus a hardened Docker sandbox (ADR-0003). */
 @Configuration(proxyBeanMethods = false)
@@ -58,8 +61,14 @@ class WorkspaceConfiguration {
 	}
 
 	@Bean
-	Sandbox sandbox(DockerClient docker, WorkspacePaths paths, AgenticProperties properties) {
+	DockerSandbox sandbox(DockerClient docker, WorkspacePaths paths, AgenticProperties properties) {
 		return new DockerSandbox(docker, paths, properties.sandbox());
+	}
+
+	@Bean
+	SecurityScanner securityScanner(DockerClient docker, WorkspacePaths paths, DockerSandbox sandbox,
+			AgenticProperties properties, JsonMapper json) {
+		return new DockerSecurityScanner(docker, paths, sandbox, properties.sandbox(), properties.scan(), json);
 	}
 
 	@Bean
@@ -73,8 +82,8 @@ class WorkspaceConfiguration {
 	}
 
 	@Bean
-	VerifyStage verifyStage(RunWorkspace workspace) {
-		return new VerifyStage(workspace);
+	VerifyStage verifyStage(RunWorkspace workspace, SecurityScanner scanner) {
+		return new VerifyStage(workspace, scanner);
 	}
 
 	@Bean

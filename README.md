@@ -133,6 +133,13 @@ Several instances can share one database:
 - Jira comments and pull request polling hold a cluster-wide lease, so only one instance runs each.
 - On shutdown, a worker stops claiming runs and gives in-flight steps `drain-timeout` (20 s) to finish. Steps still running after that release their lease, so another instance picks them up immediately.
 
+### Security scans
+After the tests pass, the changed files are scanned. Each scanner runs in its own container with the working copy mounted read-only, no capabilities, and the sandbox's non-root user.
+- **Secrets (blocking).** [gitleaks](https://github.com/gitleaks/gitleaks) runs offline and redacts secret values. A secret in a changed file sends the run back to remove it; the same finding in a file the run didn't touch is not reported.
+- **Vulnerable dependencies (advisory).** When the change touches a manifest or lockfile, [OSV-Scanner](https://github.com/google/osv-scanner) reports known vulnerabilities by CVSS severity. It needs network access: use the egress proxy, which allows `api.osv.dev` in `dev/egress`. Without network the scan is skipped and the skip is noted.
+
+Findings go to the reviewer, to the "Security" tab at the gates and to the pull request description. Settings live under `agentic.scan.*`: `secrets`, `dependencies`, the pinned images, and `timeout`.
+
 ## Models and the agent loop
 Each role (`triage`, `planner`, `coder`, `reviewer`) is served by a configurable provider and model (`agentic.models.*`). Supported provider types: `anthropic`, `openai`, `azure-openai`, `ollama`, `bedrock`, `google-genai`. Every role defaults to **Claude Opus 5.5** (`claude-opus-5-5`), reading the key from `ANTHROPIC_API_KEY`. The app starts without any key; a run escalates to a human if a model it needs is not configured.
 ```yaml
@@ -170,7 +177,7 @@ The reviewer's verdict is read only from the last line of its reply, and if tria
 | Spec | Planner with read-only tools, then a fresh-context critic (`agentic.agent.spec-critic`, on by default) | `spec` artifact: EARS requirements, design, tasks, test plan. The critic checks it against the request and the code, looking for ambiguity, contradictions, gaps, untestable criteria and wrong assumptions. If it asks for changes, the planner revises the spec once. Its findings are shown at the SPEC gate (`spec-review` artifact). |
 | Implement: tests first | Test writer (coder model). It can create and edit only test files and has no shell. | Runs on a run's first round (`agentic.agent.tests-first`, on by default). Tests for the acceptance criteria are written, and the app runs them to confirm they fail on the unchanged code, with one retry if they pass. The `tests` artifact records the files and their fingerprints. |
 | Implement | Coder with sandbox tools | Changes in the working copy that make the first-written tests pass. Approver feedback, failed checks, review findings and revision requests are fed back in. |
-| Verify | Deterministic build and test in the sandbox | Passes on to review (`diff` artifact), or sends the run back to implement |
+| Verify | Deterministic build and test in the sandbox, then security scans of the changed files | Passes on to review (`diff` and `scan` artifacts), or sends the run back to implement. A committed secret also sends it back. |
 | Review | Fresh-context reviewer with read-only tools | `review` artifact. `VERDICT: APPROVE` moves on to the PUBLISH gate; otherwise back to implement. The reviewer is told if any first-written test changed afterwards, and is shown the original version to check that it wasn't weakened. |
 
 Gates show the latest artifacts (`GET /api/v1/runs/{id}/events`, `ARTIFACT_PRODUCED`). Text from tickets and issues is passed to models as data, wrapped in an escaped `<task>` block, with an explicit instruction to ignore embedded commands. Status comments on tickets never quote failure reasons, which can contain model output; they link to the run instead. A janitor removes the sandboxes and working copies of finished runs.

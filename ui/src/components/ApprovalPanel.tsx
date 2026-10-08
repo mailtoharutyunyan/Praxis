@@ -4,7 +4,7 @@ import type { GateDecision, Run, RunEvent } from "../lib/types";
 import { DiffView } from "./DiffView";
 import { Markdown } from "./Markdown";
 
-type Tab = "spec" | "critique" | "tests" | "diff" | "review";
+type Tab = "spec" | "critique" | "tests" | "diff" | "scan" | "review";
 
 function latest(events: RunEvent[], kind: string): RunEvent | undefined {
   return [...events].reverse().find((e) => e.type === "ARTIFACT_PRODUCED" && e.payload.kind === kind);
@@ -29,6 +29,7 @@ export function ApprovalPanel(props: {
   const review = latest(events, "review");
   const tests = latest(events, "tests");
   const critique = latest(events, "spec-review");
+  const scan = latest(events, "scan");
   const initial: Tab = run.pendingGate === "SPEC" ? "spec" : "diff";
   const [tab, setTab] = useState<Tab>(initial);
   const [comment, setComment] = useState("");
@@ -36,8 +37,8 @@ export function ApprovalPanel(props: {
   const [error, setError] = useState<string | null>(null);
   const tabs = useMemo(() => ([
     ["spec", "Specification", spec], ["critique", "Spec check", critique], ["tests", "Tests first", tests],
-    ["diff", "Changes", diff], ["review", "Review", review],
-  ] as const).filter(([, , artifact]) => artifact !== undefined), [spec, critique, tests, diff, review]);
+    ["diff", "Changes", diff], ["scan", "Security", scan], ["review", "Review", review],
+  ] as const).filter(([, , artifact]) => artifact !== undefined), [spec, critique, tests, diff, scan, review]);
 
   const decide = async (decision: GateDecision) => {
     setBusy(true);
@@ -91,6 +92,12 @@ export function ApprovalPanel(props: {
             </>
           )}
           {tab === "diff" && diff && <DiffView diff={String(diff.payload.content ?? "")} />}
+          {tab === "scan" && scan && (
+            <>
+              <p className="muted small">Secret and dependency scans of the changed files (gitleaks, OSV-Scanner).</p>
+              <Markdown source={String(scan.payload.content ?? "")} />
+            </>
+          )}
           {tab === "review" && review && (
             <>
               <p><span className={`badge ${review.payload.verdict === "APPROVE" ? "ok" : "warn"}`}>{String(review.payload.verdict)}</span></p>

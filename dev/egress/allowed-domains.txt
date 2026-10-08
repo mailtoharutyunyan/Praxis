@@ -12,3 +12,5 @@ files.pythonhosted.org
 proxy.golang.org
 sum.golang.org
 api.nuget.org
+# Vulnerability database for dependency scanning (OSV-Scanner).
+api.osv.dev

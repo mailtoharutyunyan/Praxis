@@ -20,7 +20,7 @@ public record AgenticProperties(@Valid @NotNull Worker worker, @Valid @NotNull L
 		@Valid @NotNull Gates gates, @Valid @NotNull Security security, @Valid @NotNull Events events,
 		@Valid @NotNull StubStages stubStages, @Valid @NotNull Sandbox sandbox, @Valid @NotNull Scm scm,
 		@Valid @NotNull Models models, @Valid @NotNull Agent agent, @Valid @NotNull Jira jira, @Valid @NotNull Ui ui,
-		@Valid @NotNull @DefaultValue Mcp mcp) {
+		@Valid @NotNull @DefaultValue Mcp mcp, @Valid @NotNull @DefaultValue Scan scan) {
 
 	/**
 	 * @param enabled run the background worker on this instance (disable for API-only replicas)
@@ -230,5 +230,20 @@ public record AgenticProperties(@Valid @NotNull Worker worker, @Valid @NotNull L
 	 *        empty to derive it from the request
 	 */
 	public record Mcp(@DefaultValue("") String runLinkBase, @DefaultValue("") String resource) {
+	}
+
+	/**
+	 * Security scans of a run's changed files after its tests pass (VERIFYING), each in its own locked-down container
+	 * with the working copy mounted read-only.
+	 *
+	 * @param secrets scan for committed secrets (gitleaks, offline); a finding sends the run back to fix it
+	 * @param dependencies scan changed manifests and lockfiles for known vulnerabilities (OSV-Scanner); needs the
+	 *        sandbox network with an egress proxy that allows {@code api.osv.dev}; findings are advisory
+	 */
+	public record Scan(@DefaultValue("true") boolean secrets,
+			@DefaultValue("zricethezav/gitleaks:v8.30.1") @NotBlank String secretsImage,
+			@DefaultValue("true") boolean dependencies,
+			@DefaultValue("ghcr.io/google/osv-scanner:v2.6.0") @NotBlank String dependenciesImage,
+			@DefaultValue("5m") @NotNull Duration timeout) {
 	}
 }
