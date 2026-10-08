@@ -261,7 +261,7 @@ How it works:
 - Every other tool use is denied, not asked about (`--permission-mode dontAsk`). The repository cannot configure the CLI: no project settings, hooks or MCP servers are loaded.
 - The streamed transcript becomes the same run events as the API loop (agent messages, tool calls, tool results), with usage recorded as it is spent.
 - `--max-turns` limits turns, and `--max-budget-usd` gets what the run may still spend. The app kills the CLI once the call's tokens exceed what is left of the run's token budget.
-- The repository memory's `remember` tool is not available on this engine; recalled facts still reach the brief.
+- Repository memory works too: the CLI writes the facts it learns to a file outside the repository (the only file a read-only call may write), and each is stored through the same `remember` tool, with the same citation check and limits.
 - Triage needs the sandbox on this engine, so the sandbox starts during triage, before PREPARING_CONTEXT.
 
 Security trade-offs:

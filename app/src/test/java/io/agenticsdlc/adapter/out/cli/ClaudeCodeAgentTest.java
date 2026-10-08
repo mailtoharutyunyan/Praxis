@@ -6,8 +6,12 @@ import io.agenticsdlc.config.CliAgentProperties;
 import io.agenticsdlc.core.agent.AgentLoop.Outcome;
 import io.agenticsdlc.core.agent.AgentLoop.Stop;
 import io.agenticsdlc.core.agent.AgentRole;
+import io.agenticsdlc.core.agent.AgentTool;
 import io.agenticsdlc.core.agent.ExternalAgent.Access;
 import io.agenticsdlc.core.agent.ExternalAgent.Choice;
+import io.agenticsdlc.core.agent.ToolCall;
+import io.agenticsdlc.core.agent.ToolException;
+import io.agenticsdlc.core.agent.ToolSpec;
 import io.agenticsdlc.core.domain.RunEventType;
 import io.agenticsdlc.core.domain.RunView;
 import io.agenticsdlc.core.domain.Task;
@@ -47,6 +51,7 @@ class ClaudeCodeAgentTest {
 		final List<Map<String, String>> environments = new ArrayList<>();
 		final AtomicBoolean cancelled = new AtomicBoolean();
 		Flux<String> output = Flux.empty();
+		String memoryFile = "";
 
 		@Override
 		public Flux<String> execLines(UUID runId, String command, Map<String, String> env, Duration timeout) {
@@ -64,7 +69,8 @@ class ClaudeCodeAgentTest {
 		@Override
 		public Mono<CommandResult> exec(UUID runId, String command, Duration timeout) {
 			commands.add(command);
-			return Mono.just(new CommandResult(command, 0, "", false, false, Duration.ZERO));
+			String out = command.startsWith("cat ") && command.contains(ClaudeCodeCommand.MEMORY_FILE) ? memoryFile : "";
+			return Mono.just(new CommandResult(command, 0, out, false, false, Duration.ZERO));
 		}
 
 		@Override
@@ -181,10 +187,56 @@ class ClaudeCodeAgentTest {
 		assertThat(sandbox.files).containsEntry(dir + "/brief.md", "The task <task>x</task>")
 				.containsEntry(dir + "/changes.diff", diff);
 		assertThat(sandbox.files.get(dir + "/system.md")).startsWith("Review it.").contains("show_diff is the file "
-				+ dir + "/changes.diff", "remember tool is not available");
+				+ dir + "/changes.diff").doesNotContain(ClaudeCodeCommand.MEMORY_FILE);
 		assertThat(sandbox.commands.getLast()).isEqualTo("rm -rf '" + dir + "'");
 		assertThat(recording.of(RunEventType.AGENT_MESSAGE)).singleElement()
 				.satisfies(e -> assertThat(e.payload()).containsEntry("model", "claude-code/claude-haiku-5-5"));
+	}
+
+	@Test
+	void factsTheCliWritesAreStoredThroughTheRememberTool() {
+		sandbox.output = Flux.just("{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"num_turns\":2,"
+				+ "\"result\":\"Spec ready.\",\"total_cost_usd\":0.01,\"usage\":{\"input_tokens\":10,\"output_tokens\":5}}");
+		sandbox.memoryFile = """
+				{"fact": "UI tests run with npm test in ui/", "citations": [{"path": "ui/package.json", "line": 8}]}
+				not json at all
+				{"fact": "Cited nowhere", "citations": []}
+				""";
+		List<ToolCall> stored = new ArrayList<>();
+		AgentTool remember = new AgentTool() {
+			@Override
+			public ToolSpec spec() {
+				return new ToolSpec("remember", "Save a fact.", "{\"type\":\"object\"}");
+			}
+
+			@Override
+			public Mono<String> execute(UUID runId, ToolCall call) {
+				stored.add(call);
+				return call.arguments().get("citations") instanceof List<?> l && !l.isEmpty() ? Mono.just("Saved.")
+						: Mono.error(new ToolException("citations must list at least one {path, line}"));
+			}
+
+			@Override
+			public boolean mutates() {
+				return false;
+			}
+		};
+
+		Outcome outcome = agent(setup(TOKEN, false), "agentic-sandbox", false).run(recording.context, AgentRole.PLANNER,
+				Access.READ_ONLY, "agent:planner", "Plan it.", "The task", 1_000_000, "main", remember).block();
+
+		assertThat(outcome.stop()).isEqualTo(Stop.COMPLETED);
+		String dir = sandbox.files.keySet().iterator().next().replace("/system.md", "");
+		assertThat(sandbox.files.get(dir + "/system.md")).contains("write it to " + dir + "/" + ClaudeCodeCommand.MEMORY_FILE);
+		String cli = sandbox.commands.stream().filter(c -> c.contains("exec '/opt/agentic-tools/claude'")).findFirst()
+				.orElseThrow();
+		// A read-only call may write exactly one file, outside the workspace.
+		assertThat(cli).contains("'--tools' 'Read,Glob,Grep,Write'", "'Edit(/" + dir + "/" + ClaudeCodeCommand.MEMORY_FILE + ")'")
+				.doesNotContain("'Edit(./**)'");
+		assertThat(stored).extracting(c -> c.arguments().get("fact")).containsExactly("UI tests run with npm test in ui/",
+				"Cited nowhere");
+		assertThat(recording.of(RunEventType.TOOL_RESULT)).extracting(e -> e.payload().get("error")).containsExactly(false, true);
+		assertThat(sandbox.commands.getLast()).isEqualTo("rm -rf '" + dir + "'");
 	}
 
 	@Test

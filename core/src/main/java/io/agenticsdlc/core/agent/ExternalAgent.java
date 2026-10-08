@@ -59,9 +59,13 @@ public interface ExternalAgent {
 	/**
 	 * {@link #run(StageContext, AgentRole, Access, String, String, String, long)} in the named sandbox environment,
 	 * the one with the toolchain of what the call works on.
+	 *
+	 * @param remember the repository memory's {@code remember} tool, for facts the agent learns; null when the role
+	 *        may not store facts or memory is off. The engine collects its agent's facts and stores each through it,
+	 *        so they are checked exactly as in the {@link AgentLoop}.
 	 */
 	default Mono<AgentLoop.Outcome> run(StageContext context, AgentRole role, Access access, String actor, String system,
-			String brief, long tokenBudget, String environment) {
+			String brief, long tokenBudget, String environment, AgentTool remember) {
 		return run(context, role, access, actor, system, brief, tokenBudget);
 	}
 

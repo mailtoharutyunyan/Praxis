@@ -433,13 +433,14 @@ public final class AgentStages {
 			case ExternalAgent.Choice.Loop loop -> new AgentLoop(models.forRole(role), roleTools, limits)
 					.run(context, actor, system, brief, budget);
 			case ExternalAgent.Choice.External cli -> external.run(context, role, access, actor, system, brief, budget,
-					workspace.environmentFor(context.run().id(), brief));
+					workspace.environmentFor(context.run().id(), brief),
+					memory.remember() != null && roleTools.contains(memory.remember()) ? memory.remember() : null);
 			case ExternalAgent.Choice.Unavailable(String reason) -> Mono.error(new IllegalStateException(reason));
 		};
 	}
 
 	private long remainingTokens(StageContext context) {
-		return Math.max(0, runLimits.maxTokens() - context.run().usage().totalTokens());
+		return Math.max(0, runLimits.maxTokens() - context.run().usage().budgetTokens());
 	}
 
 	private static void appendRepository(StringBuilder brief, RunWorkspace.Prepared prepared) {

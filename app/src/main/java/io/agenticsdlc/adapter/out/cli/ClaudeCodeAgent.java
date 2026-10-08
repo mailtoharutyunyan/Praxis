@@ -5,7 +5,10 @@ import static io.agenticsdlc.core.workspace.WorkspacePath.shellQuote;
 import io.agenticsdlc.config.CliAgentProperties;
 import io.agenticsdlc.core.agent.AgentLoop;
 import io.agenticsdlc.core.agent.AgentRole;
+import io.agenticsdlc.core.agent.AgentTool;
 import io.agenticsdlc.core.agent.ExternalAgent;
+import io.agenticsdlc.core.agent.ToolCall;
+import io.agenticsdlc.core.domain.RunEventType;
 import io.agenticsdlc.core.domain.Task;
 import io.agenticsdlc.core.domain.Trust;
 import io.agenticsdlc.core.engine.StageContext;
@@ -77,8 +80,16 @@ public final class ClaudeCodeAgent implements ExternalAgent {
 			instructions name tools, use your own: list_files, view_file and search are Glob, Read and Grep; \
 			edit_file and create_file are Edit and Write; run_command is Bash. The working copy has no git metadata, \
 			so show_diff is the file %s: the changes against the base commit when you started (your own edits since \
-			are not in it). The remember tool is not available. You cannot ask anyone questions; your final reply is \
-			read by the pipeline.""";
+			are not in it). You cannot ask anyone questions; your final reply is read by the pipeline.""";
+
+	/** Replaces the remember tool, which the CLI does not have; the facts are stored through it afterwards. */
+	static final String MEMORY_NOTE = """
+
+			To remember a durable fact about this repository for later changes (a build or test quirk, a convention, \
+			where something lives), write it to %s with the Write tool: one JSON object per line, \
+			{"fact": "one sentence, at most 300 characters", "citations": [{"path": "path/in/repo", "line": 12}]}, \
+			citing the lines that show it. Save at most three, only ones a later change would need.""";
+	private static final int MAX_FACTS_PER_CALL = 3;
 	private static final int CHUNK_BYTES = 48 * 1024;
 	private static final Duration FILE_TIMEOUT = Duration.ofMinutes(1);
 
@@ -134,19 +145,21 @@ public final class ClaudeCodeAgent implements ExternalAgent {
 	@Override
 	public Mono<AgentLoop.Outcome> run(StageContext context, AgentRole role, Access access, String actor, String system,
 			String brief, long tokenBudget) {
-		return run(context, role, access, actor, system, brief, tokenBudget, SandboxSpec.MAIN);
+		return run(context, role, access, actor, system, brief, tokenBudget, SandboxSpec.MAIN, null);
 	}
 
 	@Override
 	public Mono<AgentLoop.Outcome> run(StageContext context, AgentRole role, Access access, String actor, String system,
-			String brief, long tokenBudget, String environment) {
+			String brief, long tokenBudget, String environment, AgentTool remember) {
 		Setup current = setup.get().orElseThrow(() -> new IllegalStateException("agents do not run on Claude Code"));
 		UUID runId = context.run().id();
 		String dir = ClaudeCodeCommand.SCRATCH + "/" + UUID.randomUUID();
+		boolean facts = remember != null && access != Access.NONE;
 		ClaudeCodeCommand command = ClaudeCodeCommand.of(properties.binary(), current.token(), current.model(role),
-				properties.maxTurns(), access, dir, remainingUsd(context));
+				properties.maxTurns(), access, dir, remainingUsd(context), facts);
 		StreamJsonTranscript transcript = new StreamJsonTranscript(context, actor, current.token(), tokenBudget, json);
-		String instructions = access == Access.NONE ? system : system + ENGINE_NOTE.formatted(dir + "/changes.diff");
+		String instructions = access == Access.NONE ? system : system + ENGINE_NOTE.formatted(dir + "/changes.diff")
+				+ (facts ? MEMORY_NOTE.formatted(dir + "/" + ClaudeCodeCommand.MEMORY_FILE) : "");
 		Mono<Void> files = write(runId, environment, dir + "/system.md", instructions)
 				.then(write(runId, environment, dir + "/brief.md", brief))
 				.then(access == Access.NONE ? Mono.empty()
@@ -160,8 +173,45 @@ public final class ClaudeCodeAgent implements ExternalAgent {
 				.onErrorResume(CommandFailedException.class, e -> Mono.just(transcript.failed(e.result())))
 				.flatMap(outcome -> access == Access.FULL || access == Access.TESTS_ONLY
 						? withoutCredential(runId, current.token(), outcome) : Mono.just(outcome))
+				.flatMap(outcome -> facts ? storeFacts(context, actor, environment, dir, remember).thenReturn(outcome)
+						: Mono.just(outcome))
 				.flatMap(outcome -> sandbox.exec(runId, environment, "rm -rf " + shellQuote(dir), FILE_TIMEOUT)
 						.onErrorResume(e -> Mono.empty()).thenReturn(outcome));
+	}
+
+	/**
+	 * Stores the facts the CLI wrote, each through the remember tool, which checks its citations against the working
+	 * copy and the run's limit, and records the call and its result as the agent loop does. A malformed or rejected
+	 * fact is recorded and skipped; it never fails the stage.
+	 */
+	private Mono<Void> storeFacts(StageContext context, String actor, String environment, String dir, AgentTool remember) {
+		UUID runId = context.run().id();
+		String file = dir + "/" + ClaudeCodeCommand.MEMORY_FILE;
+		return sandbox.exec(runId, environment, "cat " + shellQuote(file) + " 2>/dev/null || true", FILE_TIMEOUT)
+				.flatMapMany(result -> Flux.fromStream(result.output().lines().map(String::strip)
+						.filter(line -> line.startsWith("{")).limit(MAX_FACTS_PER_CALL)))
+				.index()
+				.concatMap(entry -> {
+					String raw = entry.getT2();
+					Map<String, Object> arguments;
+					try {
+						arguments = json.readValue(raw, new tools.jackson.core.type.TypeReference<Map<String, Object>>() {
+						});
+					}
+					catch (RuntimeException e) {
+						return Mono.empty();
+					}
+					ToolCall call = new ToolCall("memory-" + entry.getT1(), remember.spec().name(), arguments, raw);
+					return context.emit(RunEventType.TOOL_CALLED, actor, Map.of("tool", call.name(), "callId", call.id(),
+							"arguments", raw))
+							.then(remember.execute(runId, call)
+									.map(output -> Map.<String, Object>of("tool", call.name(), "callId", call.id(),
+											"error", false, "output", output))
+									.onErrorResume(e -> Mono.just(Map.of("tool", call.name(), "callId", call.id(),
+											"error", true, "output", String.valueOf(e.getMessage())))))
+							.flatMap(payload -> context.emit(RunEventType.TOOL_RESULT, actor, payload));
+				})
+				.then();
 	}
 
 	/** An agent with a shell can read the credential from the CLI's environment; it must not end up in the change. */

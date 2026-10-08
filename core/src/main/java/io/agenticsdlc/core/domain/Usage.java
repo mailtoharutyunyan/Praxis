@@ -27,4 +27,13 @@ public record Usage(long inputTokens, long outputTokens, long cacheReadTokens, l
 	public long totalTokens() {
 		return inputTokens + outputTokens + cacheReadTokens + cacheWriteTokens;
 	}
+
+	/**
+	 * Tokens as the run's token budget counts them: cache reads at a tenth, as providers bill them (Anthropic: 0.1x
+	 * input). An agent re-reads its whole conversation every turn, mostly from the cache, so counting those reads in
+	 * full would stop long tasks for tokens that cost almost nothing.
+	 */
+	public long budgetTokens() {
+		return inputTokens + outputTokens + cacheWriteTokens + cacheReadTokens / 10;
+	}
 }

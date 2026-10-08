@@ -203,8 +203,9 @@ public final class Transitions {
 				return;
 			}
 			Usage used = run.usage();
-			if (used.totalTokens() > limits.maxTokens()) {
-				escalate("token budget exceeded: " + used.totalTokens() + " > " + limits.maxTokens());
+			if (used.budgetTokens() > limits.maxTokens()) {
+				escalate("token budget exceeded: " + used.budgetTokens() + " > " + limits.maxTokens()
+						+ " (cache reads count a tenth); raise agentic.limits.max-tokens or split the task");
 			}
 			else if (used.costMicroUsd() > limits.maxCostMicroUsd()) {
 				escalate("cost budget exceeded: " + used.costMicroUsd() + " > " + limits.maxCostMicroUsd()

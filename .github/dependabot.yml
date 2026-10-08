@@ -1,7 +1,9 @@
 version: 2
 
 # Weekly version updates. Each new release must be 14 days old before Dependabot proposes it, which keeps
-# freshly published (and possibly compromised) versions out; security updates are not delayed.
+# freshly published (and possibly compromised) versions out; security updates are not delayed. Major versions
+# (Java 26, Node 26, TypeScript 7, ...) are upgraded on purpose, not by a bot; minor and patch updates come grouped,
+# one pull request per ecosystem.
 updates:
   - package-ecosystem: github-actions
     directory: /
@@ -19,6 +21,12 @@ updates:
       interval: weekly
     cooldown:
       default-days: 14
+    ignore:
+      - dependency-name: '*'
+        update-types: ['version-update:semver-major']
+    groups:
+      maven:
+        patterns: ['*']
 
   - package-ecosystem: npm
     directory: /ui
@@ -26,6 +34,12 @@ updates:
       interval: weekly
     cooldown:
       default-days: 14
+    ignore:
+      - dependency-name: '*'
+        update-types: ['version-update:semver-major']
+    groups:
+      npm:
+        patterns: ['*']
 
   - package-ecosystem: docker
     directory: /
@@ -33,3 +47,9 @@ updates:
       interval: weekly
     cooldown:
       default-days: 14
+    ignore:
+      - dependency-name: '*'
+        update-types: ['version-update:semver-major']
+    groups:
+      docker:
+        patterns: ['*']
