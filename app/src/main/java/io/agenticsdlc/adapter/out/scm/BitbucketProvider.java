@@ -54,6 +54,12 @@ final class BitbucketProvider implements ScmPullRequests.Provider {
 				});
 	}
 
+	@Override
+	public Mono<Void> comment(RepoCoordinates repo, PullRequest pullRequest, String text) {
+		return http.post(repository(repo) + "/pullrequests/" + pullRequest.id() + "/comments", headers(repo),
+				Map.of("content", Map.of("raw", text))).then();
+	}
+
 	private String repository(RepoCoordinates repo) {
 		return http.apiBase(repo.host(), "https://api.bitbucket.org/2.0") + "/repositories/" + repo.owner() + "/"
 				+ repo.name();

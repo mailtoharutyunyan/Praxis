@@ -65,6 +65,14 @@ final class AzureDevOpsProvider implements ScmPullRequests.Provider {
 				});
 	}
 
+	/** A new active thread on the pull request with one text comment. */
+	@Override
+	public Mono<Void> comment(RepoCoordinates repo, PullRequest pullRequest, String text) {
+		return repository(repo).flatMap(repository -> http.post(repository.apiBase() + "/pullRequests/"
+				+ pullRequest.id() + "/threads?" + API_VERSION, headers(repo), Map.of("status", "active", "comments",
+				java.util.List.of(Map.of("parentCommentId", 0, "content", text, "commentType", "text"))))).then();
+	}
+
 	private Mono<Repository> repository(RepoCoordinates repo) {
 		String repositories = organizationBase(repo) + "/" + encodePath(repo.project()) + "/_apis/git/repositories/";
 		return http.get(repositories + encodePath(repo.name()) + "?" + API_VERSION, headers(repo))

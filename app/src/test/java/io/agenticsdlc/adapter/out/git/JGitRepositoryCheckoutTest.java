@@ -169,6 +169,19 @@ class JGitRepositoryCheckoutTest {
 		}
 		var again = pushing.commitAndPush(view, "unused").block();
 		assertThat(again.commit()).isEqualTo(pushed.commit());
+
+		// The workspace is lost (e.g. the node died): a new checkout continues from the pushed branch, not the base.
+		pushing.remove(view.run().id()).block();
+		CheckoutInfo resumed = pushing.checkout(view).block();
+		assertThat(Files.readString(paths.repo(view.run().id()).resolve("hello.txt"))).isEqualTo("hello agent\n");
+		assertThat(pushing.diff(view.run().id()).block()).contains("+hello agent");
+		Files.writeString(paths.repo(view.run().id()).resolve("hello.txt"), "hello again\n");
+		var revised = pushing.commitAndPush(view, "Revise").block();
+		try (Repository remote = new FileRepositoryBuilder().setGitDir(bare.toFile()).build()) {
+			assertThat(remote.resolve("refs/heads/" + revised.branch()).name()).isEqualTo(revised.commit());
+			assertThat(remote.parseCommit(remote.resolve(revised.commit())).getParent(0).name()).isEqualTo(pushed.commit());
+		}
+		assertThat(resumed.baseBranch()).isEqualTo("main");
 	}
 
 	@Test

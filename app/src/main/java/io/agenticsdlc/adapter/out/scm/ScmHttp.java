@@ -72,7 +72,54 @@ public class ScmHttp {
 		return transientFailure(error);
 	}
 
-	private Mono<JsonNode> exchange(Mono<JsonNode> call) {
+	/**
+	 * The last {@code maxBytes} of a text resource such as a CI job log, decoded as UTF-8 and starting at a line
+	 * boundary. Hosts answer log requests with a redirect to short-lived storage; it is followed once, without the
+	 * token, which must never leave the code host.
+	 */
+	Mono<String> textTail(String url, Consumer<HttpHeaders> headers, int maxBytes) {
+		return exchange(client.get().uri(java.net.URI.create(url)).headers(headers).exchangeToMono(response -> {
+			if (response.statusCode().is3xxRedirection() && response.headers().asHttpHeaders().getLocation() != null) {
+				java.net.URI location = java.net.URI.create(url).resolve(response.headers().asHttpHeaders().getLocation());
+				return response.releaseBody().then(client.get().uri(location).exchangeToMono(r -> tail(r, maxBytes)));
+			}
+			return tail(response, maxBytes);
+		}).timeout(timeout));
+	}
+
+	private static Mono<String> tail(org.springframework.web.reactive.function.client.ClientResponse response, int maxBytes) {
+		if (response.statusCode().isError()) {
+			return response.createException().flatMap(Mono::error);
+		}
+		return response.bodyToFlux(org.springframework.core.io.buffer.DataBuffer.class)
+				.reduce(new java.io.ByteArrayOutputStream(), (out, buffer) -> {
+					try {
+						byte[] bytes = new byte[buffer.readableByteCount()];
+						buffer.read(bytes);
+						out.writeBytes(bytes);
+						if (out.size() > 2 * maxBytes) {
+							byte[] all = out.toByteArray();
+							out.reset();
+							out.write(all, all.length - maxBytes, maxBytes);
+						}
+						return out;
+					}
+					finally {
+						org.springframework.core.io.buffer.DataBufferUtils.release(buffer);
+					}
+				})
+				.map(out -> {
+					byte[] all = out.toByteArray();
+					boolean cut = all.length > maxBytes;
+					String text = new String(all, cut ? all.length - maxBytes : 0, Math.min(all.length, maxBytes),
+							java.nio.charset.StandardCharsets.UTF_8);
+					int newline = text.indexOf('\n');
+					return cut && newline >= 0 ? text.substring(newline + 1) : text;
+				})
+				.defaultIfEmpty("");
+	}
+
+	private <T> Mono<T> exchange(Mono<T> call) {
 		return call
 				.onErrorMap(WebClientResponseException.class, e -> new ScmException(e.getStatusCode(),
 						e.getRequest() == null ? "" : e.getRequest().getMethod() + " " + e.getRequest().getURI().getPath(),

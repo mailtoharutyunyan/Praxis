@@ -4,6 +4,7 @@ import io.agenticsdlc.core.domain.RunView;
 import io.agenticsdlc.core.domain.ScmKind;
 import io.agenticsdlc.core.scm.PullRequests;
 import java.util.EnumMap;
+import java.util.List;
 import java.util.Map;
 import reactor.core.publisher.Mono;
 import reactor.util.retry.Retry;
@@ -16,6 +17,18 @@ public class ScmPullRequests implements PullRequests {
 		Mono<PullRequest> open(RepoCoordinates repo, OpenRequest request);
 
 		Mono<PullRequestState> state(RepoCoordinates repo, PullRequest pullRequest);
+
+		default Mono<Void> comment(RepoCoordinates repo, PullRequest pullRequest, String text) {
+			return Mono.empty();
+		}
+
+		default Mono<Boolean> canWrite(RepoCoordinates repo, String user) {
+			return Mono.just(false);
+		}
+
+		default Mono<List<FailedJob>> failedJobs(RepoCoordinates repo, String pipelineId) {
+			return Mono.just(List.of());
+		}
 	}
 
 	private final Map<ScmKind, Provider> providers;
@@ -52,6 +65,30 @@ public class ScmPullRequests implements PullRequests {
 		return Mono.defer(() -> {
 			RepoCoordinates repo = RepoCoordinates.of(view.task().repository());
 			return providers.get(repo.kind()).state(repo, pullRequest);
+		});
+	}
+
+	@Override
+	public Mono<Void> comment(RunView view, PullRequest pullRequest, String text) {
+		return Mono.defer(() -> {
+			RepoCoordinates repo = RepoCoordinates.of(view.task().repository());
+			return providers.get(repo.kind()).comment(repo, pullRequest, text);
+		});
+	}
+
+	@Override
+	public Mono<Boolean> canWrite(RunView view, String user) {
+		return Mono.defer(() -> {
+			RepoCoordinates repo = RepoCoordinates.of(view.task().repository());
+			return providers.get(repo.kind()).canWrite(repo, user);
+		});
+	}
+
+	@Override
+	public Mono<List<FailedJob>> failedJobs(RunView view, String pipelineId) {
+		return Mono.defer(() -> {
+			RepoCoordinates repo = RepoCoordinates.of(view.task().repository());
+			return providers.get(repo.kind()).failedJobs(repo, pipelineId);
 		});
 	}
 }

@@ -174,7 +174,11 @@ public class JGitRepositoryCheckout implements RepositoryCheckout, ChangePublish
 				config.setString("core", null, "hooksPath", "/dev/null");
 				config.setString(SECTION, null, "baseBranch", baseBranch);
 				config.save();
-				git.checkout().setCreateBranch(true).setName(workBranch).call();
+				// A run whose branch was already pushed (an open pull request being revised after its workspace was
+				// lost) continues from that branch; otherwise the work branch starts at the base.
+				ObjectId pushed = fetchWorkBranch(git, view, url, workBranch);
+				git.checkout().setCreateBranch(true).setName(workBranch)
+						.setStartPoint(pushed == null ? head.name() : pushed.name()).call();
 				// Last: a checkout interrupted before this point is redone from scratch.
 				config.setString(SECTION, null, "baseCommit", head.name());
 				config.save();
@@ -205,6 +209,25 @@ public class JGitRepositoryCheckout implements RepositoryCheckout, ChangePublish
 				formatter.format(formatter.scan(baseTree, new DirCacheIterator(repository.readDirCache())));
 			}
 			return out.toString(StandardCharsets.UTF_8);
+		}
+	}
+
+	/** The tip of {@code workBranch} on the remote, fetched into the clone; null if the branch does not exist there. */
+	private ObjectId fetchWorkBranch(Git git, RunView view, String url, String workBranch) {
+		String remoteRef = "refs/remotes/origin/" + workBranch;
+		try {
+			var fetch = git.fetch().setRemote(url)
+					.setRefSpecs(new org.eclipse.jgit.transport.RefSpec("+refs/heads/" + workBranch + ":" + remoteRef))
+					.setCredentialsProvider(credentials(view.task().repository().kind(), url));
+			if (cloneDepth > 0) {
+				fetch.setDepth(cloneDepth);
+			}
+			fetch.call();
+			return git.getRepository().resolve(remoteRef);
+		}
+		catch (GitAPIException | IOException | RuntimeException e) {
+			// Most runs have not pushed yet: the remote has no such branch.
+			return null;
 		}
 	}
 

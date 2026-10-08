@@ -72,7 +72,8 @@ public enum RunState {
 			case REVIEWING -> EnumSet.of(IMPLEMENTING, AWAITING_APPROVAL);
 			case AWAITING_APPROVAL -> EnumSet.of(SPECIFYING, IMPLEMENTING, REVIEWING, PUBLISHING);
 			case PUBLISHING -> EnumSet.of(PR_OPEN);
-			case PR_OPEN -> EnumSet.of(DONE);
+			// A revision (review comment, CI failure) sends an open pull request back to implementation.
+			case PR_OPEN -> EnumSet.of(DONE, IMPLEMENTING);
 			case NEEDS_HUMAN -> EnumSet.copyOf(WORKING);
 			case DONE, FAILED, CANCELLED -> EnumSet.noneOf(RunState.class);
 		};

@@ -74,6 +74,12 @@ export class Api {
     return this.request(`/runs/${encodeURIComponent(id)}/cancel`, { method: "POST", body: JSON.stringify({ reason }) });
   }
 
+  requestRevision(id: string, text: string, location?: string): Promise<Run> {
+    return this.request(`/runs/${encodeURIComponent(id)}/revisions`, {
+      method: "POST", body: JSON.stringify({ text, location: location || null }),
+    });
+  }
+
   resume(id: string): Promise<Run> {
     return this.request(`/runs/${encodeURIComponent(id)}/resume`, { method: "POST" });
   }

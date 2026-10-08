@@ -55,7 +55,7 @@ export interface RunPage {
 export type EventType =
   | "RUN_CREATED" | "STATE_CHANGED" | "TRIAGED" | "GATE_OPENED" | "GATE_DECIDED" | "STAGE_STARTED" | "STAGE_COMPLETED"
   | "AGENT_MESSAGE" | "TOOL_CALLED" | "TOOL_RESULT" | "COMMAND_OUTPUT" | "ARTIFACT_PRODUCED" | "USAGE_RECORDED"
-  | "ERROR" | "RISK_RAISED";
+  | "ERROR" | "RISK_RAISED" | "REVISION_REQUESTED";
 
 export interface RunEvent {
   seq: number;

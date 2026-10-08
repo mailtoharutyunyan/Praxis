@@ -48,7 +48,8 @@ class CoreConfiguration {
 
 	@Bean
 	RunCommands runCommands(RunStore store, Clock clock, AgenticProperties properties) {
-		return new RunCommands(store, clock, properties.gates().forbidSelfApproval());
+		return new RunCommands(store, clock, properties.gates().forbidSelfApproval(),
+				properties.scm().feedback().maxRevisions());
 	}
 
 	@Bean

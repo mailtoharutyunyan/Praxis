@@ -1,14 +1,17 @@
 package io.agenticsdlc.adapter.out.scm;
 
+import io.agenticsdlc.core.scm.PullRequests.FailedJob;
 import io.agenticsdlc.core.scm.PullRequests.OpenRequest;
 import io.agenticsdlc.core.scm.PullRequests.PullRequest;
 import io.agenticsdlc.core.scm.PullRequests.PullRequestState;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
 import org.springframework.http.HttpHeaders;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import tools.jackson.databind.JsonNode;
 
@@ -49,6 +52,35 @@ final class GitLabProvider implements ScmPullRequests.Provider {
 					// "locked" is transient: GitLab holds the merge request while it merges it.
 					default -> PullRequestState.OPEN;
 				});
+	}
+
+	@Override
+	public Mono<Void> comment(RepoCoordinates repo, PullRequest pullRequest, String text) {
+		return http.post(project(repo) + "/merge_requests/" + pullRequest.id() + "/notes", headers(repo),
+				Map.of("body", text)).then();
+	}
+
+	/** Developer access or above (level 30), including inherited group membership. {@code user} is the numeric id. */
+	@Override
+	public Mono<Boolean> canWrite(RepoCoordinates repo, String user) {
+		return http.get(project(repo) + "/members/all/" + encode(user), headers(repo))
+				.map(member -> member.path("access_level").asInt(0) >= 30)
+				.onErrorResume(ScmHttp.ScmException.class, e -> e.status().value() == 404 ? Mono.just(false)
+						: Mono.error(e));
+	}
+
+	@Override
+	public Mono<List<FailedJob>> failedJobs(RepoCoordinates repo, String pipelineId) {
+		return http.get(project(repo) + "/pipelines/" + encode(pipelineId) + "/jobs?scope%5B%5D=failed&per_page=100",
+				headers(repo))
+				.flatMapMany(jobs -> Flux.fromIterable(jobs.valueStream().toList()))
+				.take(GitHubProvider.MAX_FAILED_JOBS)
+				.concatMap(job -> http.textTail(project(repo) + "/jobs/" + job.path("id").asString() + "/trace",
+								headers(repo), GitHubProvider.LOG_TAIL_BYTES)
+						.onErrorResume(e -> Mono.just("(log unavailable: " + e.getMessage() + ")"))
+						.map(log -> new FailedJob(job.path("name").asString() + " (stage " + job.path("stage").asString()
+								+ ")", job.path("web_url").asString(""), log)))
+				.collectList();
 	}
 
 	private String project(RepoCoordinates repo) {

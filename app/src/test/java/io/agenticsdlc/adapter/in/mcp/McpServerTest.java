@@ -96,7 +96,7 @@ class McpServerTest {
 		JsonNode tools = rpc(user("v", "viewer"), "tools/list", Map.of()).path("tools");
 		List<String> names = tools.valueStream().map(t -> t.path("name").asString()).toList();
 		assertThat(names).containsExactlyInAnyOrder("submit_task", "list_runs", "get_run", "get_run_artifact",
-				"get_run_events", "cancel_run", "resume_run");
+				"get_run_events", "cancel_run", "resume_run", "request_revision");
 		JsonNode submit = tools.valueStream().filter(t -> t.path("name").asString().equals("submit_task")).findFirst()
 				.orElseThrow();
 		assertThat(submit.path("inputSchema").path("required").valueStream().map(JsonNode::asString).toList())

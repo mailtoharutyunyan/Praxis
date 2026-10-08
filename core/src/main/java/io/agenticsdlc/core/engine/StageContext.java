@@ -25,7 +25,7 @@ public final class StageContext {
 	private final AtomicReference<Usage> spent = new AtomicReference<>(Usage.ZERO);
 	static final int HISTORY_LIMIT = 500;
 	private static final Set<RunEventType> HISTORY_TYPES = Set.of(RunEventType.ARTIFACT_PRODUCED,
-			RunEventType.GATE_DECIDED, RunEventType.STAGE_COMPLETED);
+			RunEventType.GATE_DECIDED, RunEventType.STAGE_COMPLETED, RunEventType.REVISION_REQUESTED);
 
 	public StageContext(RunView view, RunStore store, String leaseOwner, Clock clock) {
 		this.view = Objects.requireNonNull(view, "view");

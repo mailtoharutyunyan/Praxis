@@ -40,6 +40,10 @@ final class ApiModels {
 	record CancelRequest(@Size(max = 4000) String reason) {
 	}
 
+	/** Changes wanted on the run's open pull request; {@code location} is optional, e.g. {@code src/App.java:42}. */
+	record RevisionBody(@NotBlank @Size(max = 20_000) String text, @Size(max = 500) String location) {
+	}
+
 	record RaiseRiskRequest(@NotNull RiskLevel risk, @NotBlank @Size(max = 4000) String reason) {
 	}
 

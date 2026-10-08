@@ -21,7 +21,11 @@ public final class FakeScmServer implements AutoCloseable {
 		}
 	}
 
-	public record Response(int status, String json) {
+	/** @param location for redirects; null otherwise */
+	public record Response(int status, String json, String location) {
+		public Response(int status, String json) {
+			this(status, json, null);
+		}
 	}
 
 	private final HttpServer server;
@@ -57,6 +61,9 @@ public final class FakeScmServer implements AutoCloseable {
 				.orElse(new Response(404, "{\"message\":\"no route for " + request.method() + " " + path + "\"}"));
 		byte[] bytes = response.json().getBytes(StandardCharsets.UTF_8);
 		exchange.getResponseHeaders().add("Content-Type", "application/json");
+		if (response.location() != null) {
+			exchange.getResponseHeaders().add("Location", response.location());
+		}
 		exchange.sendResponseHeaders(response.status(), bytes.length);
 		exchange.getResponseBody().write(bytes);
 		exchange.close();

@@ -6,6 +6,7 @@ import { TERMINAL } from "../lib/types";
 import { ApprovalPanel } from "../components/ApprovalPanel";
 import { Markdown } from "../components/Markdown";
 import { Pipeline } from "../components/Pipeline";
+import { RevisionPanel } from "../components/RevisionPanel";
 import { StateBadge } from "../components/StateBadge";
 import { Timeline } from "../components/Timeline";
 
@@ -90,6 +91,12 @@ export function RunPage(props: {
     await api.decide(run.id, run.pendingGate!, decision, comment);
     await refresh();
   };
+  // Rejects on failure, so the panel keeps the text and shows the error.
+  const revise = async (text: string, location: string) => {
+    setError(null);
+    await api.requestRevision(run.id, text, location);
+    await refresh();
+  };
   const raise = () => {
     const risk = window.prompt("Raise risk to (MEDIUM or HIGH)", "HIGH")?.toUpperCase() as RiskLevel | undefined;
     const reason = risk ? window.prompt("Why?") : null;
@@ -133,6 +140,7 @@ export function RunPage(props: {
           {run.state === "AWAITING_APPROVAL" && run.pendingGate && (
             <ApprovalPanel run={run} events={events} canApprove={isApprover} onDecide={decide} />
           )}
+          {run.state === "PR_OPEN" && isOperator && <RevisionPanel onRequest={revise} />}
           <section className="card">
             <div className="row" style={{ marginBottom: 8 }}>
               <h2 style={{ margin: 0, fontSize: 16 }}>Activity</h2>

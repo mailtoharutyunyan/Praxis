@@ -204,6 +204,17 @@ class R2dbcRunStore implements RunStore {
 	}
 
 	@Override
+	public Mono<UUID> runWithPullRequest(String url) {
+		return db.sql("""
+				select run_id from run_events
+				where type = 'ARTIFACT_PRODUCED' and payload->>'kind' = 'pull-request' and payload->>'url' = :url
+				order by occurred_at desc limit 1""")
+				.bind("url", url)
+				.map(row -> row.get("run_id", UUID.class))
+				.one();
+	}
+
+	@Override
 	public Flux<RunEvent> latestEvents(UUID runId, Set<RunEventType> types, int limit) {
 		return db.sql("""
 				select * from (

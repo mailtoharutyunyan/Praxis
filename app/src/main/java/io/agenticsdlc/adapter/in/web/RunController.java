@@ -3,11 +3,13 @@ package io.agenticsdlc.adapter.in.web;
 import io.agenticsdlc.adapter.in.web.ApiModels.CancelRequest;
 import io.agenticsdlc.adapter.in.web.ApiModels.DecisionRequest;
 import io.agenticsdlc.adapter.in.web.ApiModels.RaiseRiskRequest;
+import io.agenticsdlc.adapter.in.web.ApiModels.RevisionBody;
 import io.agenticsdlc.adapter.in.web.ApiModels.RunEventResponse;
 import io.agenticsdlc.adapter.in.web.ApiModels.RunPage;
 import io.agenticsdlc.adapter.in.web.ApiModels.RunResponse;
 import io.agenticsdlc.config.AgenticProperties;
 import io.agenticsdlc.core.application.RunCommands;
+import io.agenticsdlc.core.application.RevisionRequest;
 import io.agenticsdlc.core.application.RunQueries;
 import io.agenticsdlc.core.port.RunStore;
 import io.agenticsdlc.core.domain.Run;
@@ -15,6 +17,7 @@ import io.agenticsdlc.core.domain.RunState;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.Size;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.EnumSet;
@@ -99,6 +102,16 @@ class RunController {
 				Flux.interval(keepAlive)
 						.map(tick -> ServerSentEvent.<RunEventResponse>builder().comment("keep-alive").build())
 						.takeUntilOther(shared.ignoreElements())));
+	}
+
+	/** Send the open pull request back for changes; it is revised on the same branch and published after approval. */
+	@PostMapping("/{runId}/revisions")
+	Mono<RunResponse> revise(@PathVariable UUID runId, @Valid @RequestBody RevisionBody request,
+			@RequestHeader(name = "Idempotency-Key", required = false) @Size(max = 255) String idempotencyKey,
+			@AuthenticationPrincipal Jwt user) {
+		String sourceId = "api:" + (idempotencyKey == null ? UUID.randomUUID() : user.getSubject() + ":" + idempotencyKey);
+		return respond(commands.requestRevision(runId, new RevisionRequest("api", sourceId, user.getSubject(),
+				request.text(), request.location(), null), user.getSubject()));
 	}
 
 	@PostMapping("/{runId}/decisions")

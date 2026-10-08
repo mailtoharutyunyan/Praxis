@@ -191,6 +191,24 @@ Both steps are idempotent: a retry finds the existing branch and pull request. T
 
 For GitHub Enterprise or self-managed GitLab, set `agentic.scm.api-urls."[host]"`. Setting `agentic.scm.draft-pull-requests=true` opens drafts.
 
+### Revising an open pull request
+While a pull request is open, a run can be sent back for changes. The agent works on the same branch, and the run goes through verification, review and the PUBLISH gate again before the new commit is pushed. Revision requests can come from:
+- **Review comments.** A comment on the pull request that mentions `@agentic-sdlc` (`agentic.scm.feedback.mention`), for example: `@agentic-sdlc use a constant for the page size`.
+  - Line comments carry their file and line.
+  - Only people who can push to the repository are heard.
+  - The bot replies on the pull request with a link to the run.
+- **Failed CI.** When a pipeline fails on the commit the agent pushed last, the agent receives the failed jobs' names and the ends of their logs, and fixes the code. This is limited to `max-ci-fixes` (3) per run.
+- **API, MCP and UI.** `POST /api/v1/runs/{id}/revisions` (operator), the `request_revision` MCP tool, or the "Request changes" panel on the run page.
+
+Repeated deliveries are ignored, and a run allows `agentic.scm.feedback.max-revisions` (5) rounds in total. The request text is passed to the agents as data, never as instructions. If a run's workspace is gone, for example after a node failure, the checkout continues from the pushed branch.
+
+| Host | Webhook URL | Events | Secret |
+|---|---|---|---|
+| GitHub | `/api/v1/webhooks/github` | Issue comments, Pull request review comments, Pull request reviews, Workflow runs | `agentic.scm.feedback.github-secret` (`X-Hub-Signature-256`) |
+| GitLab | `/api/v1/webhooks/gitlab` | Comments, Pipeline events | `agentic.scm.feedback.gitlab-token` (`X-Gitlab-Token`) |
+
+The token needs read access to CI (GitHub: Actions read; GitLab: `api` scope), and on GitHub it also needs to read collaborator permissions. On Bitbucket and Azure DevOps, use the API, MCP or UI to request revisions; replies are still posted on the pull request.
+
 ## Jira
 Label an issue `agentic` (or whatever `agentic.jira.trigger-label` is) to start a run. A run starts when the issue is created with the label, or when the label is added later. `POST /api/v1/webhooks/jira` accepts two senders:
 - **Jira admin webhook** (events: issue created and issue updated) with a secret. Requests are verified with `X-Hub-Signature: sha256=…` over the raw body. Retries reuse `X-Atlassian-Webhook-Identifier` (Cloud) or the body `timestamp` (Data Center) and map to the same run.
@@ -264,6 +282,7 @@ cd ui && npm test                          # UI unit tests
 | `get_run_artifact` | viewer | The latest `spec`, `diff`, `review` or `pull-request`. |
 | `get_run_events` | viewer | A page of the event log; pass `afterSeq` to read only what is new. |
 | `cancel_run`, `resume_run` | operator | Stop a run, or continue one that is waiting for a human. |
+| `request_revision` | operator | Ask for changes to a run's open pull request. |
 
 Gate approvals are not available over MCP. A human approves specs, implementations and pushes in the UI. Tasks submitted over MCP are untrusted, because an assistant may relay text it read elsewhere, so they always stop at the SPEC gate.
 
@@ -292,6 +311,7 @@ All endpoints need a bearer JWT from your OIDC provider (`spring.security.oauth2
 | Method & path | Role | Purpose |
 |---|---|---|
 | `POST /api/v1/tasks` | operator | Submit a task. An optional `Idempotency-Key` header makes retries return the original run. |
+| `POST /api/v1/runs/{id}/revisions` | operator | Ask for changes to the open pull request: `{"text": "...", "location": "src/App.java:42"}`. |
 | `GET /api/v1/runs?state=&createdBefore=&beforeId=&limit=` | viewer | List runs, newest first. Pass a page's `nextCreatedBefore` and `nextBeforeId` to get the next page. |
 | `GET /api/v1/runs/{id}` | viewer | Run with its task, risk, gates and usage. |
 | `GET /api/v1/runs/{id}/events?afterSeq=&limit=` | viewer | Event log page (JSON). |

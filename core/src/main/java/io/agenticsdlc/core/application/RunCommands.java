@@ -25,18 +25,26 @@ import reactor.core.publisher.Mono;
 import reactor.util.retry.Retry;
 
 /**
- * Human actions on a run: gate decisions, cancel, resume, raising risk. Each one re-reads the run, applies the
+ * Human actions on a run: gate decisions, cancel, resume, raising risk, revising an open pull request. Each one re-reads the run, applies the
  * domain rule and stores the result with version fencing; a race with the worker is retried on fresh state.
  */
 public final class RunCommands {
 
 	private static final int MAX_CONFLICT_RETRIES = 3;
+	public static final int DEFAULT_MAX_REVISIONS = 5;
 
 	private final RunStore store;
 	private final Clock clock;
 	private final boolean forbidSelfApproval;
+	private final int maxRevisions;
 
 	public RunCommands(RunStore store, Clock clock, boolean forbidSelfApproval) {
+		this(store, clock, forbidSelfApproval, DEFAULT_MAX_REVISIONS);
+	}
+
+	/** @param maxRevisions revision rounds of one pull request, so a comment or CI loop cannot run forever */
+	public RunCommands(RunStore store, Clock clock, boolean forbidSelfApproval, int maxRevisions) {
+		this.maxRevisions = maxRevisions;
 		this.store = Objects.requireNonNull(store, "store");
 		this.clock = Objects.requireNonNull(clock, "clock");
 		this.forbidSelfApproval = forbidSelfApproval;
@@ -88,6 +96,28 @@ public final class RunCommands {
 			payload.put("reason", reason);
 			return new Change(next, List.of(event(runId, RunEventType.ERROR, actor, payload, now)));
 		}, actor);
+	}
+
+	/**
+	 * Send the run's open pull request back for changes. A request already received (same {@code sourceId}) returns
+	 * the run unchanged, and after {@code maxRevisions} rounds further requests are refused.
+	 */
+	public Mono<Run> requestRevision(UUID runId, RevisionRequest request, String actor) {
+		Objects.requireNonNull(request, "request");
+		return store.latestEvents(runId, Set.of(RunEventType.REVISION_REQUESTED), maxRevisions + 50).collectList()
+				.flatMap(previous -> {
+					if (previous.stream().anyMatch(e -> request.sourceId().equals(e.payload().get("sourceId")))) {
+						return store.find(runId).map(RunView::run);
+					}
+					long rounds = previous.stream().filter(e -> e.payload().get("source") != null).count();
+					if (rounds >= maxRevisions) {
+						return Mono.error(new IllegalStateException("run " + runId + " reached its limit of "
+								+ maxRevisions + " revisions; start a new task"));
+					}
+					return change(runId, (view, now) -> new Change(view.run().revise(now),
+							List.of(event(runId, RunEventType.REVISION_REQUESTED, actor, request.toPayload(), now))),
+							actor);
+				});
 	}
 
 	public Mono<Run> resume(UUID runId, String actor) {

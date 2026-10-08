@@ -127,6 +127,14 @@ public final class InMemoryRunStore implements RunStore, RunChangeSignals {
 	}
 
 	@Override
+	public synchronized Mono<UUID> runWithPullRequest(String url) {
+		return Mono.justOrEmpty(events.entrySet().stream()
+				.filter(entry -> entry.getValue().stream().anyMatch(e -> e.type() == RunEventType.ARTIFACT_PRODUCED
+						&& "pull-request".equals(e.payload().get("kind")) && url.equals(e.payload().get("url"))))
+				.map(Map.Entry::getKey).findFirst());
+	}
+
+	@Override
 	public synchronized Flux<RunEvent> latestEvents(UUID runId, Set<RunEventType> types, int limit) {
 		List<RunEvent> matching = events.getOrDefault(runId, List.of()).stream().filter(e -> types.contains(e.type()))
 				.toList();

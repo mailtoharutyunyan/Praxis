@@ -53,6 +53,9 @@ public interface RunStore {
 	/** Events with {@code seq > afterSeq}, oldest first. */
 	Flux<RunEvent> events(UUID runId, long afterSeq, int limit);
 
+	/** The run that opened the pull request at {@code url} (its {@code pull-request} artifact); empty if none. */
+	Mono<UUID> runWithPullRequest(String url);
+
 	/** The newest {@code limit} events of the given types, oldest first. */
 	Flux<RunEvent> latestEvents(UUID runId, Set<io.agenticsdlc.core.domain.RunEventType> types, int limit);
 

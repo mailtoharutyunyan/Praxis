@@ -116,7 +116,23 @@ public record AgenticProperties(@Valid @NotNull Worker worker, @Valid @NotNull L
 			@DefaultValue("1") @Min(0) int cloneDepth, @DefaultValue({}) java.util.Map<String, String> apiUrls,
 			@DefaultValue("Agentic SDLC") @NotBlank String authorName,
 			@DefaultValue("agentic-sdlc@noreply.invalid") @NotBlank String authorEmail,
-			@DefaultValue("false") boolean draftPullRequests, @DefaultValue("2m") @NotNull Duration pullRequestPollInterval) {
+			@DefaultValue("false") boolean draftPullRequests, @DefaultValue("2m") @NotNull Duration pullRequestPollInterval,
+			@Valid @NotNull @DefaultValue Feedback feedback) {
+	}
+
+	/**
+	 * Revisions of open pull requests from code host webhooks (review comments and failed CI), see README.
+	 *
+	 * @param mention how reviewers address the bot in a pull request comment
+	 * @param githubSecret secret of the GitHub webhook ({@code X-Hub-Signature-256}); empty disables the endpoint
+	 * @param gitlabToken secret token of the GitLab webhook ({@code X-Gitlab-Token}); empty disables the endpoint
+	 * @param maxRevisions revision rounds per run, from any source
+	 * @param maxCiFixes revision rounds per run triggered by failed CI
+	 * @param runLinkBase prefix for links to a run in replies, e.g. {@code https://agentic.example.com/#/runs/}
+	 */
+	public record Feedback(@DefaultValue("@agentic-sdlc") @NotBlank String mention, @DefaultValue("") String githubSecret,
+			@DefaultValue("") String gitlabToken, @DefaultValue("5") @Min(1) int maxRevisions,
+			@DefaultValue("3") @Min(0) int maxCiFixes, @DefaultValue("") String runLinkBase) {
 	}
 
 	/**

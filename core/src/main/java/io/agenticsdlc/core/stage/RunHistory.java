@@ -7,6 +7,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 
@@ -48,6 +49,34 @@ public record RunHistory(List<RunEvent> events) {
 		catch (NoSuchAlgorithmException e) {
 			throw new IllegalStateException(e);
 		}
+	}
+
+	/** A revision of the open pull request being worked on. */
+	public record Revision(String source, String author, String text, String location, String url) {
+
+		/** For the agents: who asked and where, then the request itself. */
+		public String describe() {
+			return "Requested via " + source + " by " + author + (location == null ? "" : " on " + location) + ":\n"
+					+ text;
+		}
+	}
+
+	/**
+	 * The revision this round works on: the newest {@code REVISION_REQUESTED} since the pull request was last
+	 * published. Empty for a run's first round.
+	 */
+	public Optional<Revision> currentRevision() {
+		for (RunEvent event : events.reversed()) {
+			if (event.type() == RunEventType.ARTIFACT_PRODUCED && "pull-request".equals(event.payload().get("kind"))) {
+				return Optional.empty();
+			}
+			if (event.type() == RunEventType.REVISION_REQUESTED) {
+				Map<String, Object> p = event.payload();
+				return Optional.of(new Revision(String.valueOf(p.get("source")), String.valueOf(p.get("author")),
+						Objects.toString(p.get("text"), ""), (String) p.get("location"), (String) p.get("url")));
+			}
+		}
+		return Optional.empty();
 	}
 
 	/** The latest gate decision, if it asked for changes: who and what they wrote. */

@@ -4,6 +4,7 @@ import { ApiError } from "../lib/api";
 import type { Run, RunEvent } from "../lib/types";
 import { ApprovalPanel } from "./ApprovalPanel";
 import { DiffView } from "./DiffView";
+import { RevisionPanel } from "./RevisionPanel";
 import { Timeline } from "./Timeline";
 
 const run: Run = {
@@ -86,5 +87,25 @@ describe("Timeline", () => {
     expect(screen.getByText(/no API key/)).toBeInTheDocument();
     rerender(<Timeline events={events} verbose />);
     expect(screen.getByText("view_file")).toBeInTheDocument();
+  });
+});
+
+describe("RevisionPanel", () => {
+  it("sends the requested change and keeps it when the request fails", async () => {
+    const onRequest = vi.fn()
+      .mockRejectedValueOnce(new ApiError(409, { detail: "run reached its limit of 5 revisions" }))
+      .mockResolvedValueOnce(undefined);
+    render(<RevisionPanel onRequest={onRequest} />);
+    const box = screen.getByLabelText("Requested change") as HTMLTextAreaElement;
+    fireEvent.change(box, { target: { value: "Use a constant" } });
+    fireEvent.change(screen.getByLabelText("File and line"), { target: { value: "src/App.java:4" } });
+
+    fireEvent.click(screen.getByRole("button", { name: "Request changes" }));
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toContain("limit of 5 revisions"));
+    expect(box.value).toBe("Use a constant");
+
+    fireEvent.click(screen.getByRole("button", { name: "Request changes" }));
+    await waitFor(() => expect(box.value).toBe(""));
+    expect(onRequest).toHaveBeenLastCalledWith("Use a constant", "src/App.java:4");
   });
 });

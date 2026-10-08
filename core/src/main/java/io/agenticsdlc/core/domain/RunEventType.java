@@ -16,5 +16,7 @@ public enum RunEventType {
 	ARTIFACT_PRODUCED,
 	USAGE_RECORDED,
 	ERROR,
-	RISK_RAISED
+	RISK_RAISED,
+	/** Someone asked for changes to the run's open pull request; payload: source, sourceId, author, text. */
+	REVISION_REQUESTED
 }

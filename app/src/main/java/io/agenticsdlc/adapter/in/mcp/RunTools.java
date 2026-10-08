@@ -2,6 +2,7 @@ package io.agenticsdlc.adapter.in.mcp;
 
 import io.agenticsdlc.config.AgenticProperties;
 import io.agenticsdlc.core.application.NewTask;
+import io.agenticsdlc.core.application.RevisionRequest;
 import io.agenticsdlc.core.application.RunCommands;
 import io.agenticsdlc.core.application.RunQueries;
 import io.agenticsdlc.core.application.TaskIntake;
@@ -160,6 +161,25 @@ class RunTools {
 				.then(Mono.defer(() -> queries.get(id))).map(this::summary);
 	}
 
+	@McpTool(name = "request_revision", description = """
+			Ask for changes to a run's open pull request (state PR_OPEN), like a review comment. The agent revises \
+			the same branch, and a human approves the push again before it is published.""",
+			annotations = @McpTool.McpAnnotations(title = "Request a revision", readOnlyHint = false,
+					destructiveHint = false, idempotentHint = true, openWorldHint = true))
+	Mono<RunSummary> requestRevision(@McpToolParam(description = "Run id (UUID).") String runId,
+			@McpToolParam(description = "What should change, as you would write it in a review comment.") String text,
+			@McpToolParam(description = "File and line it is about, e.g. src/App.java:42.", required = false)
+			String location,
+			@McpToolParam(description = "Any unique string; repeating it does not request the change twice.",
+					required = false) String idempotencyKey) {
+		UUID id = uuid(runId);
+		String request = required("text", text);
+		return caller(OPERATE).flatMap(user -> commands.requestRevision(id, new RevisionRequest("mcp", "mcp:"
+				+ (idempotencyKey == null || idempotencyKey.isBlank() ? UUID.randomUUID() : user.getName() + ":"
+						+ idempotencyKey), user.getName(), request, blankToNull(location), null), user.getName()))
+				.then(Mono.defer(() -> queries.get(id))).map(this::summary);
+	}
+
 	@McpTool(name = "resume_run", description = """
 			Continue a run that stopped for a human (NEEDS_HUMAN) at the stage where it stopped, e.g. after fixing \
 			the cause. It cannot skip a gate.""",
@@ -199,8 +219,8 @@ class RunTools {
 					+ " gate in the web UI; check again later.";
 			case NEEDS_HUMAN -> "Stopped for a human at " + run.resumeState()
 					+ "; read get_run_events for the reason, then resume_run or cancel_run.";
-			case PR_OPEN -> "The pull request is open (get_run_artifact kind=pull-request); the run finishes when it "
-					+ "is merged or closed.";
+			case PR_OPEN -> "The pull request is open (get_run_artifact kind=pull-request); request_revision asks for "
+					+ "changes, and the run finishes when it is merged or closed.";
 			case DONE -> "Done: the pull request was merged.";
 			case FAILED, CANCELLED -> "Finished without a merged pull request.";
 			default -> "Working (" + run.state() + "); check again in a minute.";

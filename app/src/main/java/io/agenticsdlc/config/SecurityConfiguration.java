@@ -69,7 +69,8 @@ class SecurityConfiguration {
 						// MCP: any API role may connect; each tool checks the role it needs (ADR-0005).
 						.pathMatchers(mcpEndpoint).hasAnyRole(VIEWER, OPERATOR, APPROVER)
 						.pathMatchers(HttpMethod.GET, "/api/v1/**").hasAnyRole(VIEWER, OPERATOR, APPROVER)
-						.pathMatchers(HttpMethod.POST, "/api/v1/tasks", "/api/v1/runs/*/cancel", "/api/v1/runs/*/resume")
+						.pathMatchers(HttpMethod.POST, "/api/v1/tasks", "/api/v1/runs/*/cancel", "/api/v1/runs/*/resume",
+								"/api/v1/runs/*/revisions")
 						.hasRole(OPERATOR)
 						.pathMatchers(HttpMethod.POST, "/api/v1/runs/*/decisions", "/api/v1/runs/*/risk")
 						.hasRole(APPROVER)

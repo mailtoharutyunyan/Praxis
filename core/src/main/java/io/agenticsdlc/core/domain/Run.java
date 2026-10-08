@@ -121,6 +121,19 @@ public record Run(
 		return new Run(id, taskId, resumed.state, risk, gatePolicy, null, null, 0, 0, usage, version, createdAt, now);
 	}
 
+	/**
+	 * Revise the open pull request: back to implementation for a new round (fix and review counters start over), then
+	 * through verification, review and the PUBLISH gate again, pushing to the same branch.
+	 */
+	public Run revise(Instant now) {
+		if (state != RunState.PR_OPEN) {
+			throw new IllegalStateException("run " + id + " has no open pull request to revise (state " + state + ")");
+		}
+		requireTransition(RunState.IMPLEMENTING);
+		return new Run(id, taskId, RunState.IMPLEMENTING, risk, gatePolicy, null, null, 0, 0, usage, version, createdAt,
+				now);
+	}
+
 	/** Record triage. Only once, while triaging. */
 	public Run triaged(RiskLevel risk, GatePolicy policy, Instant now) {
 		Objects.requireNonNull(risk, "risk");

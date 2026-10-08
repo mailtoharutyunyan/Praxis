@@ -279,6 +279,11 @@ class ApplicationServicesTest {
 		}
 
 		@Override
+		public Mono<UUID> runWithPullRequest(String url) {
+			return delegate.runWithPullRequest(url);
+		}
+
+		@Override
 		public reactor.core.publisher.Flux<RunEvent> latestEvents(UUID runId,
 				java.util.Set<io.agenticsdlc.core.domain.RunEventType> types, int limit) {
 			return delegate.latestEvents(runId, types, limit);

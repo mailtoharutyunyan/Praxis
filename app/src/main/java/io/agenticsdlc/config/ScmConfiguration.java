@@ -6,6 +6,7 @@ import io.agenticsdlc.core.application.RunCommands;
 import io.agenticsdlc.core.port.RunStore;
 import io.agenticsdlc.core.scm.ChangePublisher;
 import io.agenticsdlc.core.scm.PublishStage;
+import io.agenticsdlc.core.scm.PullRequestFeedback;
 import io.agenticsdlc.core.scm.PullRequestTracker;
 import io.agenticsdlc.core.scm.PullRequests;
 import io.agenticsdlc.core.workspace.RepositoryCheckout;
@@ -33,6 +34,14 @@ class ScmConfiguration {
 	@Bean
 	PublishStage publishStage(ChangePublisher publisher, PullRequests pullRequests, RepositoryCheckout checkout) {
 		return new PublishStage(publisher, pullRequests, checkout);
+	}
+
+	@Bean
+	PullRequestFeedback pullRequestFeedback(RunStore store, RunCommands commands, PullRequests pullRequests,
+			AgenticProperties properties) {
+		AgenticProperties.Feedback feedback = properties.scm().feedback();
+		return new PullRequestFeedback(store, commands, pullRequests, feedback.mention(), feedback.maxCiFixes(),
+				feedback.runLinkBase());
 	}
 
 	@Bean

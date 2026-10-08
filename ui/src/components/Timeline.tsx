@@ -21,6 +21,8 @@ function Body({ event }: { event: RunEvent }) {
       return <span>Waiting for approval at the <b>{text(p.gate)}</b> gate</span>;
     case "GATE_DECIDED":
       return <span><b>{event.actor}</b> {text(p.decision).toLowerCase().replace(/_/g, " ")} at {text(p.gate)}{p.comment ? `: “${text(p.comment)}”` : ""}</span>;
+    case "REVISION_REQUESTED":
+      return <span>Changes requested via <b>{text(p.source)}</b> by {text(p.author)}{p.location ? ` on ${text(p.location)}` : ""}: “{text(p.text)}”</span>;
     case "RISK_RAISED":
       return <span>Risk raised to <b>{text(p.to)}</b> by {event.actor}: {text(p.reason)}</span>;
     case "AGENT_MESSAGE":

@@ -113,6 +113,7 @@ public final class AgentStages {
 			history.latestRework().ifPresent(rework -> brief.append("\n\nThis is a follow-up attempt. ")
 					.append(rework).append("\nFix these problems; your earlier changes are still in the workspace."));
 			history.latestChangeRequest().ifPresent(feedback -> brief.append("\n\n").append(feedback));
+			history.currentRevision().ifPresent(revision -> brief.append(Prompts.revision(revision)));
 			return loop(AgentRole.CODER, tools.coderTools(), loopLimits)
 					.run(context, "agent:coder", Prompts.CODER, brief.toString(), remainingTokens(context))
 					.flatMap(outcome -> {
@@ -136,6 +137,8 @@ public final class AgentStages {
 					history.latestArtifact(RunHistory.SPEC).ifPresent(spec -> brief.append(
 							"\n\nSpecification:\n").append(Prompts.block("spec", spec)));
 					appendRepository(brief, tuple.getT1());
+					history.currentRevision().ifPresent(revision -> brief.append(Prompts.revision(revision))
+							.append("\nCheck that the changes address this request."));
 					brief.append("\n\nReview the current changes (show_diff).");
 					return artifact(context, RunHistory.DIFF, diff, Map.of(RunHistory.FINGERPRINT, RunHistory.fingerprint(diff)))
 							.then(loop(AgentRole.REVIEWER, tools.readOnlyTools(), loopLimits)

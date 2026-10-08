@@ -66,7 +66,7 @@ public final class PublishStage implements StageHandler {
 	private Mono<StageOutcome> publish(StageContext context, Task task, RunHistory history) {
 		// Deferred: the external writes must not even start unless the fence event before them was accepted.
 		return progress(context, "Pushing the work branch.")
-				.then(Mono.defer(() -> publisher.commitAndPush(context.view(), commitMessage(context))))
+				.then(Mono.defer(() -> publisher.commitAndPush(context.view(), commitMessage(context, history))))
 				.flatMap(pushed -> progress(context, "Opening the pull request for " + pushed.branch() + ".")
 						.then(Mono.defer(() -> pullRequests.open(context.view(), new PullRequests.OpenRequest(
 								pushed.branch(), pushed.baseBranch(), title(task), body(context, history)))))
@@ -93,9 +93,18 @@ public final class PublishStage implements StageHandler {
 		return title.length() <= 250 ? title : title.substring(0, 250);
 	}
 
-	static String commitMessage(StageContext context) {
+	static String commitMessage(StageContext context, RunHistory history) {
 		Task task = context.task();
-		return title(task) + "\n\n" + abbreviate(task.description(), 2_000) + "\n\nAgentic-SDLC-Run: " + context.run().id();
+		return history.currentRevision()
+				.map(revision -> "Address " + revision.source() + " feedback: " + firstLine(revision.text()) + "\n\n"
+						+ abbreviate(revision.text(), 2_000))
+				.orElseGet(() -> title(task) + "\n\n" + abbreviate(task.description(), 2_000))
+				+ "\n\nAgentic-SDLC-Run: " + context.run().id();
+	}
+
+	private static String firstLine(String text) {
+		String line = text.strip().lines().findFirst().orElse("");
+		return line.length() <= 72 ? line : line.substring(0, 72) + "…";
 	}
 
 	static String body(StageContext context, RunHistory history) {
