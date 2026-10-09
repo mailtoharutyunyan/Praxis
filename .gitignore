@@ -39,3 +39,6 @@ build/
 
 ### Claude Code agent worktrees ###
 .claude/worktrees/
+
+### Local working notes ###
+state.md
